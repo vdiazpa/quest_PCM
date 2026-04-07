@@ -122,7 +122,7 @@ python example_script.py
 ### Option 2: Run the Program using GUI
 From any directory, with your virtual environment activated, run the command:
 ```bash
-quest_pcm
+pcm
 ```
 
 you can also run the program from the `quest_PCM` directory, with your virtual environment activated, run the command:
