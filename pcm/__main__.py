@@ -47,7 +47,11 @@ class MainWindow(QMainWindow):
         self.resize(1000, 600)
         layout = QVBoxLayout()
         # --- Logo ---
-        self.BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        repo_root = os.environ.get("QUEST_PCM_ROOT")
+        if repo_root and os.path.isdir(repo_root):
+            self.BASE_DIR = repo_root
+        else:
+            self.BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         logo_label = QLabel()
         pixmap = QPixmap(
             os.path.join(self.BASE_DIR, "Images", "PCM_logo.png")
