@@ -35,8 +35,9 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import QTimer, Qt, QDate
 from PySide6.QtGui import QPixmap, QFont, QPalette, QColor
 from PySide6.QtWidgets import QDialog, QMessageBox
-from pcm.worker import run_simulation_process
+from pcm.ui.worker import run_simulation_process
 from pcm.ui.config_editor import ConfigEditorDialog
+from pcm.utils.base_dir import resolve_base_dir
 
 
 # --- Main GUI ---
@@ -47,17 +48,15 @@ class MainWindow(QMainWindow):
         self.resize(1000, 600)
         layout = QVBoxLayout()
         # --- Logo ---
-        repo_root = os.environ.get("QUEST_PCM_ROOT")
-        if repo_root and os.path.isdir(repo_root):
-            self.BASE_DIR = repo_root
-        else:
-            self.BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        self.BASE_DIR = resolve_base_dir()
         logo_label = QLabel()
         pixmap = QPixmap(
             os.path.join(self.BASE_DIR, "Images", "PCM_logo.png")
         )  # your logo file
         if not pixmap.isNull():
-            pixmap = pixmap.scaledToWidth(250, Qt.TransformationMode.SmoothTransformation)
+            pixmap = pixmap.scaledToWidth(
+                250, Qt.TransformationMode.SmoothTransformation
+            )
             logo_label.setPixmap(pixmap)
             logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(logo_label)
