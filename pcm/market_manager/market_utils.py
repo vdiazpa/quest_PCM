@@ -12,7 +12,7 @@ def _time_series_dict(values):
     """Create a time series dictionary."""
     return {'data_type': 'time_series', 'values': values}
 
-def build_time_sets(total_days, DA_lookahead_hours, RT_resolution, RT_lookahead_periods):
+def build_time_sets(total_days, DA_lookahead_hours, RT_resolution = None, RT_lookahead_periods = None):
     '''
     Build time sets for Day-Ahead (DA) and Real-Time (RT) markets.
 
@@ -35,9 +35,10 @@ def build_time_sets(total_days, DA_lookahead_hours, RT_resolution, RT_lookahead_
         DA_time_sets[day] = list(range(DA_start, DA_end))
 
         # RT: Each day starts at sub-hourly index 1, includes all RT periods plus lookahead
-        RT_start = day * 24 * 60/(RT_resolution) + 1
-        RT_end = RT_start + (24) * 60/(RT_resolution) + 1
-        RT_time_sets[day] = list(range(int(RT_start), int(RT_end)))
+        if RT_resolution is not None:
+            RT_start = day * 24 * 60/(RT_resolution) + 1
+            RT_end = RT_start + (24) * 60/(RT_resolution) + 1
+            RT_time_sets[day] = list(range(int(RT_start), int(RT_end)))
     return DA_time_sets, RT_time_sets
 
 def fix_slow_units(source_model, target_model, data_resolution_minutes):
@@ -265,9 +266,9 @@ def populate_initial_status(source_model, target_model, timestep_minutes):
                 target_storage_dict["initial_gen_mode"][source_storage_name, unit_num] = current_gen_mode
                 target_storage_dict["initial_pump_mode"][source_storage_name, unit_num] = current_pump_mode
 
-def evaluate_system_costs_revenue(md_sol, md_DA_sol, evaluate_revenue=False):
+def evaluate_system_costs_revenue(md_sol, md_DA_sol, evaluate_revenue=False, mode="single_period"):
     """
-    Evaluates the total commitment and production costs for generators and storage units in the market data solution.
+    Evaluates the total commitment, production costs, and revenues earned by generators and storage units from the market data solution.
 
     Args:
         md_sol: The market data solution object containing the results of the market simulation.
@@ -277,94 +278,157 @@ def evaluate_system_costs_revenue(md_sol, md_DA_sol, evaluate_revenue=False):
         Tuple: (commitment_costs, production_costs, storage_commitment_costs, storage_production_costs)
     """
 
-    def _get_reserves_revenue(RT_lmp, DA_dict, RT_dict, DA_syst_dict, RT_syst_dict, 
-                              DA_area_dict, RT_area_dict, element_type, element_name, 
-                              current_hour, resolution, upward_reserves, downward_reserves):
-        """Get product values for a specific element and product."""
-        for product_name in upward_reserves + downward_reserves:
-                DA_value = DA_dict.get(product_name + "_supplied",{}).get("values",[0]*(current_hour+1))[current_hour] 
-                DA_syst_price = DA_syst_dict.get(product_name + "_price",{}).get("values",[0]*(current_hour+1))[current_hour]
-                DA_area_price = DA_area_dict.get(product_name + "_price",{}).get("values",[0]*(current_hour+1))[current_hour]
+    def _get_reserves_revenue(RT_lmp_series, DA_dict, RT_dict, DA_syst_dict, RT_syst_dict,
+                             DA_area_dict, RT_area_dict, time_indices,
+                             resolution, upward_reserves, downward_reserves):
 
-                RT_value = RT_dict.get(product_name + "_supplied",{}).get("values",[0])[0]
-                RT_syst_price = RT_syst_dict.get(product_name + "_price",{}).get("values",[0])[0]
-                RT_area_price = RT_area_dict.get(product_name + "_price",{}).get("values",[0])[0]
+        for product_name in upward_reserves + downward_reserves:
+            revenues = []
+
+            for t in time_indices:
+                # --- DA ---
+                DA_value = DA_dict.get(product_name + "_supplied", {}).get("values", [0]*(t+1))[t]
+                DA_syst_price = DA_syst_dict.get(product_name + "_price", {}).get("values", [0]*(t+1))[t]
+                DA_area_price = DA_area_dict.get(product_name + "_price", {}).get("values", [0]*(t+1))[t]
+
+                # --- RT ---
+                if mode == "single_period":
+                    RT_value = RT_dict.get(product_name + "_supplied",{}).get("values",[0])[0]
+                    RT_syst_price = RT_syst_dict.get(product_name + "_price",{}).get("values",[0])[0]
+                    RT_area_price = RT_area_dict.get(product_name + "_price",{}).get("values",[0])[0]
+                    deployment_val = RT_syst_dict.get(product_name + "_deployed",{}).get("values",[0])[0]
+                else: # multi_hour
+                    RT_value = RT_dict.get(product_name + "_supplied", {}).get("values", [0]*(t+1))[t]
+                    RT_syst_price = RT_syst_dict.get(product_name + "_price", {}).get("values", [0]*(t+1))[t]
+                    RT_area_price = RT_area_dict.get(product_name + "_price", {}).get("values", [0]*(t+1))[t]
+                    deployment_val = RT_syst_dict.get(product_name + "_deployed", {}).get("values", [0]*(t+1))[t]
+
                 DA_price = DA_syst_price + DA_area_price
                 RT_price = RT_syst_price + RT_area_price
-                deployment_val =  RT_syst_dict.get(product_name + "_deployed",{}).get("values",[0])[0]
 
-                capacity_revenue = (DA_value * DA_price + (DA_value - RT_value) * RT_price) * resolution / 60
-                deployed_energy = deployment_val * RT_value * resolution/60
-        
-                key = f"{product_name}_supplied"
-                if key not in DA_dict and key not in RT_dict:
-                    continue
+                capacity_revenue = (DA_value * DA_price + (RT_value - DA_value) * RT_price) * resolution / 60
+                deployed_energy = deployment_val * RT_value * resolution / 60
+
                 if product_name in upward_reserves:
-                    RT_dict[f"{product_name}_revenue"] = _time_series_dict([capacity_revenue + deployed_energy * RT_lmp])
+                    revenues.append(capacity_revenue + deployed_energy * RT_lmp_series[rt_idx])
                 else:
-                    RT_dict[f"{product_name}_revenue"] = _time_series_dict([capacity_revenue - deployed_energy * RT_lmp])
+                    revenues.append(capacity_revenue - deployed_energy * RT_lmp_series[rt_idx])
+            key = f"{product_name}_supplied"
+            if key not in DA_dict and key not in RT_dict:
+                continue
+            RT_dict[f"{product_name}_revenue"] = _time_series_dict(revenues)
+
+    # Determine time indices to evaluate based on mode
+    if mode == "single_period":
+        current_hour = datetime.strptime(md_sol.data["system"]["timestamp"][0], "%H:%M").hour
+        time_indices = [current_hour]
+    elif mode == "multi_hour":
+        n = len(md_DA_sol.data["system"]["time_keys"])
+        time_indices = list(range(n))
+    else:
+        raise ValueError("mode must be 'single_period' or 'multi_hour'")
 
     commitment_costs = 0
     production_costs = 0
+    storage_costs = 0
+
     DA_system_dict = md_DA_sol.data["system"]
     RT_system_dict = md_sol.data["system"]
+    rt_resolution = RT_system_dict["time_period_length_minutes"]
 
-    for (gen_num, DA_gen_dict),(_, RT_gen_dict) in zip(md_DA_sol.elements(element_type='generator'), md_sol.elements(element_type='generator')):
+    for (_, DA_gen_dict), (_, RT_gen_dict) in zip(
+        md_DA_sol.elements(element_type='generator'),
+        md_sol.elements(element_type='generator')
+    ):
+
         commitment_costs += sum(RT_gen_dict.get('commitment_cost', {}).get('values', [0]))
         production_costs += sum(RT_gen_dict['production_cost']["values"])
-        rt_resolution = md_sol.data["system"]["time_period_length_minutes"]
-        if evaluate_revenue:
-            current_hour = datetime.strptime(md_sol.data["system"]["timestamp"][0], "%H:%M").hour
-            gen_bus = RT_gen_dict['bus']
-            
-            current_gen_area = RT_gen_dict['area']
-            DA_area_dict = md_DA_sol.data["elements"]["area"][current_gen_area]
-            RT_area_dict = md_sol.data["elements"]["area"][current_gen_area]
 
-            DA_lmp = md_DA_sol.data["elements"]["bus"][gen_bus]["lmp"]["values"][current_hour]
-            RT_lmp = md_sol.data["elements"]["bus"][gen_bus]["lmp"]["values"][0]
+        if not evaluate_revenue:
+            continue
 
-            RT_power = RT_gen_dict["pg"]["values"][0]
-            DA_power = DA_gen_dict["pg"]["values"][current_hour]
-            
-            DA_reserve_price = DA_system_dict.get("reserve_price",{}).get("values",[0]*(current_hour+1))[current_hour]
-            DA_reserve_provided = DA_gen_dict.get("reserve_supplied",{}).get("values",[0]*(current_hour+1))[current_hour]
-            RT_gen_dict["DA_reserve_revenue"] = _time_series_dict([DA_reserve_price * DA_reserve_provided * rt_resolution / 60])
+        gen_bus = RT_gen_dict['bus']
+        gen_area = RT_gen_dict['area']
 
-            energy_revenue = (DA_lmp*DA_power + (RT_power-DA_power)*RT_lmp)*rt_resolution/60
-            RT_gen_dict["energy_revenue"] = _time_series_dict([energy_revenue])
-            upward_reserves = ["regulation_up", "spinning_reserve", "non_spinning_reserve", "supplemental_reserve", "flexible_ramp_up"]
-            downward_reserves = ["regulation_down", "flexible_ramp_down"]
+        DA_area_dict = md_DA_sol.data["elements"]["area"][gen_area]
+        RT_area_dict = md_sol.data["elements"]["area"][gen_area]
 
-            _get_reserves_revenue(RT_lmp, DA_gen_dict, RT_gen_dict, DA_system_dict, RT_system_dict, DA_area_dict, RT_area_dict, 'generator', 
-                                  gen_num, current_hour, rt_resolution, upward_reserves, downward_reserves)
-    storage_costs = 0
-    for (storage_num, DA_storage_dict),(_, RT_storage_dict) in zip(md_DA_sol.elements(element_type='storage'), md_sol.elements(element_type='storage')):
+        DA_lmp_series = md_DA_sol.data["elements"]["bus"][gen_bus]["lmp"]["values"]
+        RT_lmp_series = md_sol.data["elements"]["bus"][gen_bus]["lmp"]["values"]
+
+        energy_revenues = []
+
+        for t in time_indices:
+            rt_idx = t if len(RT_lmp_series) > 1 else 0
+            DA_lmp = DA_lmp_series[t]
+            RT_lmp = RT_lmp_series[rt_idx]
+            DA_power = DA_gen_dict["pg"]["values"][t]
+            RT_power = RT_gen_dict["pg"]["values"][rt_idx]
+            energy = (DA_lmp * DA_power + (RT_power - DA_power) * RT_lmp) * rt_resolution / 60
+            energy_revenues.append(energy)
+
+        RT_gen_dict["energy_revenue"] = _time_series_dict(energy_revenues)
+
+        upward_reserves = ["regulation_up", "spinning_reserve", "non_spinning_reserve", "supplemental_reserve", "flexible_ramp_up"]
+        downward_reserves = ["regulation_down", "flexible_ramp_down"]
+        _get_reserves_revenue(
+            RT_lmp_series,
+            DA_gen_dict, RT_gen_dict,
+            DA_system_dict, RT_system_dict,
+            DA_area_dict, RT_area_dict,
+            time_indices,
+            rt_resolution,
+            upward_reserves, downward_reserves
+        )
+
+    for (_, DA_storage_dict), (_, RT_storage_dict) in zip(
+        md_DA_sol.elements(element_type='storage'),
+        md_sol.elements(element_type='storage')
+    ):
+
         storage_costs += sum(RT_storage_dict["operational_cost"]["values"])
-        if evaluate_revenue:
-            storage_bus = RT_storage_dict['bus']
-            current_storage_area = RT_storage_dict['area']
-            DA_area_dict = md_DA_sol.data["elements"]["area"][current_storage_area]
-            RT_area_dict = md_sol.data["elements"]["area"][current_storage_area]
 
-            DA_lmp = md_DA_sol.data["elements"]["bus"][storage_bus]["lmp"]["values"][current_hour]
-            RT_lmp = md_sol.data["elements"]["bus"][storage_bus]["lmp"]["values"][0]
+        if not evaluate_revenue:
+            continue
 
-            RT_charge_power = RT_storage_dict["p_charge_only"]["values"][0]
-            DA_charge_power = DA_storage_dict["p_charge_only"]["values"][current_hour]
-            RT_discharge_power = RT_storage_dict["p_discharge_only"]["values"][0]
-            DA_discharge_power = DA_storage_dict["p_discharge_only"]["values"][current_hour]
-            RT_relative_power = RT_discharge_power - RT_charge_power
-            DA_relative_power = DA_discharge_power - DA_charge_power
-            
-            energy_revenue = (DA_lmp*DA_relative_power + (RT_relative_power-DA_relative_power)*RT_lmp)*rt_resolution/60
-            RT_storage_dict["energy_revenue"] = _time_series_dict([energy_revenue])
+        bus = RT_storage_dict['bus']
+        area = RT_storage_dict['area']
 
-            sto_upward_reserves = ["regulation_up", "spinning_reserve", "non_spinning_reserve", "supplemental_reserve"]
-            sto_downward_reserves = ["regulation_down"]
-            _get_reserves_revenue(RT_lmp, DA_storage_dict, RT_storage_dict, DA_system_dict, RT_system_dict, DA_area_dict, RT_area_dict, 'storage', 
-                                  storage_num, current_hour, rt_resolution, sto_upward_reserves, sto_downward_reserves)
-            
+        DA_area_dict = md_DA_sol.data["elements"]["area"][area]
+        RT_area_dict = md_sol.data["elements"]["area"][area]
+
+        DA_lmp_series = md_DA_sol.data["elements"]["bus"][bus]["lmp"]["values"]
+        RT_lmp_series = md_sol.data["elements"]["bus"][bus]["lmp"]["values"]
+
+        energy_revenues = []
+
+        for t in time_indices:
+            rt_idx = t if len(RT_lmp_series) > 1 else 0
+            DA_lmp = DA_lmp_series[t]
+            RT_lmp = RT_lmp_series[rt_idx]
+            DA_charge = DA_storage_dict["p_charge_only"]["values"][t]
+            RT_charge = RT_storage_dict["p_charge_only"]["values"][rt_idx]
+            DA_discharge = DA_storage_dict["p_discharge_only"]["values"][t]
+            RT_discharge = RT_storage_dict["p_discharge_only"]["values"][rt_idx]
+            DA_net = DA_discharge - DA_charge
+            RT_net = RT_discharge - RT_charge
+            energy = (DA_lmp * DA_net + (RT_net - DA_net) * RT_lmp) * rt_resolution / 60
+            energy_revenues.append(energy)
+
+        RT_storage_dict["energy_revenue"] = _time_series_dict(energy_revenues)
+
+        sto_upward = ["regulation_up", "spinning_reserve", "non_spinning_reserve", "supplemental_reserve"]
+        sto_downward = ["regulation_down"]
+        _get_reserves_revenue(
+            RT_lmp_series,
+            DA_storage_dict, RT_storage_dict,
+            DA_system_dict, RT_system_dict,
+            DA_area_dict, RT_area_dict,
+            time_indices,
+            rt_resolution,
+            sto_upward, sto_downward
+        )
+
     return commitment_costs, production_costs + storage_costs
 
 def evaluate_RT_resolution_SoC(pyomo_uc_model, ed_model):
@@ -722,7 +786,7 @@ class BESS_Degradation:
         fd = self.calculate_cycle_degradation()
         self.L = 1 - self.static_params["alpha_SEI"] * np.exp(-self.static_params["beta_SEI"] * fd) - (1 - self.static_params["alpha_SEI"]) * np.exp(-fd)
 
-def evaluate_degradation(reference_model, RT_results):
+def evaluate_degradation(reference_model, RT_results, scope = "DA"):
     """
     Evaluates the degradation of BESS units based on their charge and discharge cycles.
 
@@ -740,12 +804,27 @@ def evaluate_degradation(reference_model, RT_results):
             discharge_C_rates = []
             deg_obj = BESS_Degradation(chemistry_option)
             for day in RT_results.keys():
-                for ts in RT_results[day].keys():
-                    storage_md = RT_results[day][ts].data['elements']['storage'][storage_id]
-                    soc = storage_md['state_of_charge']["values"][0]
+                if scope == "DA":
+                    time_keys = np.linspace(0, len(RT_results[day].data["system"]["time_keys"]) - 1, len(RT_results[day].data["system"]["time_keys"])).astype(int)
+                    da_deg_list = []
+                else:
+                    time_keys = RT_results[day].keys()
+                for ts in time_keys:
+                    if scope == "DA":
+                        storage_md = RT_results[day].data['elements']['storage'][storage_id]
+                        soc = storage_md['state_of_charge']["values"][ts]
+                        discharge_power = storage_md['p_discharge']["values"][ts]
+                    else:
+                        storage_md = RT_results[day][ts].data['elements']['storage'][storage_id]
+                        soc = storage_md['state_of_charge']["values"][0]
+                        discharge_power = storage_md['p_discharge']["values"][0]
                     soc_values.append(soc)
-                    discharge_power = storage_md['p_discharge']["values"][0]
                     discharge_C_rates.append(discharge_power / storage_rated_cap)
                     deg_obj.update_instance(soc_values, discharge_C_rates, [25]*len(soc_values))
                     deg_obj.calculate_total_degradation()
-                    storage_md[f"capacity_after_degradation_{chemistry_option}"] = _time_series_dict([storage_dict['energy_capacity'] * (1- deg_obj.L)])
+                    if scope == "RT":
+                        storage_md[f"capacity_after_degradation_{chemistry_option}"] = _time_series_dict([storage_dict['energy_capacity'] * (1- deg_obj.L)])
+                    else:
+                        da_deg_list.append(storage_dict['energy_capacity'] * (1- deg_obj.L))
+                if scope == "DA":
+                    storage_md[f"capacity_after_degradation_{chemistry_option}"] = _time_series_dict(da_deg_list)

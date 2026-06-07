@@ -263,9 +263,10 @@ class ResultPlotter:
         if len(df_lmp.columns) < 10:
             self.utils.plot_lines(df_lmp, plt_dict, f"bus_LMP_{self.current_market}", self.enable_plotly)
         else:
+            print("Large number of buses detected, skipping PNG generation for LMP plot. Plotly HTML will be generated instead.")
             self.utils.plot_lines(df_lmp, plt_dict, f"bus_LMP_{self.current_market}", plotly_enabled = True, png_enabled = False)
 
-    def plot_reserves(self):
+    def plot_reserves(self, pricing_solved = False):
         """
         Plot system- and area-level reserve supply stacks and clearing prices.
 
@@ -304,7 +305,8 @@ class ResultPlotter:
                 plt_name = f"{reserve_type.replace('_requirement', '')}"
                 self.utils.plot_stackgraphs(result, reserve_req, plt_dict, f"system_{plt_name}_{self.current_market}", self.enable_plotly, subdir_name=f"Ancillary_Services_{self.current_market}")
 
-                system_clearing_prices[f"system_{plt_name}"] = self.system_dat[f"{plt_name}_price"]["values"]
+                if pricing_solved:
+                    system_clearing_prices[f"system_{plt_name}"] = self.system_dat[f"{plt_name}_price"]["values"]
         if system_clearing_prices:
             df_system_prices = pd.DataFrame(system_clearing_prices)
             plt_dict = self.populate_plot_dict(None, "Clearing price ($/MW)", "$", None, "System Ancillary Service Clearing Prices", "step")
@@ -336,7 +338,8 @@ class ResultPlotter:
                     plt_name = f"{reserve_type.replace('_requirement', '')}"
                     self.utils.plot_stackgraphs(result, reserve_req, plt_dict, f"area_{area}_{plt_name}_{self.current_market}", self.enable_plotly, subdir_name=f"Ancillary Services_{self.current_market}")
 
-                    area_clearing_prices[f"area_{area}_{plt_name}"] = area_dat[f"{plt_name}_price"]["values"]
+                    if pricing_solved:
+                        area_clearing_prices[f"area_{area}_{plt_name}"] = area_dat[f"{plt_name}_price"]["values"]
         if area_clearing_prices:
             df_area_prices = pd.DataFrame(area_clearing_prices)
             plt_dict = self.populate_plot_dict(None, "Clearing price ($/MW)", "$", None, "Area Ancillary Service Clearing Prices", "step")
@@ -425,12 +428,11 @@ class ResultPlotter:
         storage_soc = storage_soc[0]['values']
         
         storage_DA_soc = self.extract_records(input_dict, 'DA State of Charge Requirement', 'RT_SoC_requirement')
-        storage_DA_soc = storage_DA_soc[0]['values'] 
 
-        df_soc = pd.DataFrame({
-            f"{storage_name} RT SoC": storage_soc,
-            f"{storage_name} DA SoC": storage_DA_soc
-        })
+        df_soc = pd.DataFrame({f"{storage_name} SoC": storage_soc})
+        if storage_DA_soc:
+            storage_DA_soc = storage_DA_soc[0].get('values', [])
+            df_soc[f"{storage_name} DA SoC"] = storage_DA_soc
 
         plt_dict = self.populate_plot_dict(None, "State of Charge", "", None, f"{storage_name} State of Charge", "linear")
         self.utils.plot_lines(df_soc, plt_dict, plt_name, self.enable_plotly, subdir_name = subdirectory_name)
@@ -468,14 +470,15 @@ class ResultPlotter:
             deg_record = self.extract_records(input_dict, f'{chemistry}', f'capacity_after_degradation_{chemistry}')
             if deg_record:
                 degradation_data[chemistry] = deg_record[0]['values']
-        
+        if not degradation_data:
+            return
         df_deg = pd.DataFrame(degradation_data)  # transpose so that rows=time steps
 
         plt_dict = self.populate_plot_dict(None, "Capacity (MWh)", "MWh", None, f"{storage_name} Potential Cyclic Degradation", "linear")
         self.utils.plot_lines(df_deg, plt_dict, plt_name, self.enable_plotly, subdir_name = subdirectory_name)
 
     def plot_PHS_unit_schedule(self, storage_name, input_dict, plt_name, subdirectory_name=""):
-        pass
+        
         unit_schedules = {}
         plt_color_dict = {}
         genmode_dict = input_dict['Unit_GenMode']
@@ -500,7 +503,7 @@ class ResultPlotter:
         plotly_plot_name = f"{storage_name}_Unit_Schedules"
         self.utils.plot_lines(pd.DataFrame(unit_schedules), plotly_plot_dict, plotly_plot_name, plotly_enabled = self.enable_plotly, png_enabled = False, subdir_name = subdirectory_name)
 
-    def plot_storage_data(self):
+    def plot_storage_data(self, pricing_solved = False):
         """
         Create all storage-related plots for the system.
 
@@ -515,7 +518,8 @@ class ResultPlotter:
         for s_name, s_dict in self.storage_dat.items():
 
             self.storage_dispatch_plotter(s_name, s_dict, s_name + "_Dispatch", subdirectory_name = s_name)
-            self.storage_revenue_plotter(s_name, s_dict,  s_name + "_Revenue", subdirectory_name = s_name)
+            if pricing_solved:
+                self.storage_revenue_plotter(s_name, s_dict,  s_name + "_Revenue", subdirectory_name = s_name)
             self.storage_soc_plotter(s_name, s_dict, s_name + "_SoC", subdirectory_name = s_name)
             self.storage_cost_plotter(s_name, s_dict, s_name + "_Cost", subdirectory_name = s_name)
             if s_dict["storage_type"] == "BESS":

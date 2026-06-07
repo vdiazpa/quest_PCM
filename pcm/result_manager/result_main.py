@@ -48,12 +48,16 @@ class ResultManager():
         # Reference data for exporters and metadata
         self.all_config = market_obj.data_obj.config
         self.input_data_ref = market_obj.DA_model.data
-        self.RT_resolution = market_obj.data_obj.config["RT_resolution"]
+        self.RT_resolution = market_obj.data_obj.config.get("RT_resolution",60)
         self.start_date = market_obj.data_obj.start_date
         self.end_date = market_obj.data_obj.end_date
         self.system_name = market_obj.data_obj.folder_path
         self.result_interval = market_obj.data_obj.config["output_interval"]
         self.plotly_enabled = market_obj.data_obj.config["plotly_plots"]
+        self.simulate_DA_only = market_obj.data_obj.config.get("simulate_DA_only", False)
+        self.solved_pricing_problem = market_obj.data_obj.config.get("solve_pricing_problem", False)
+        self.plot_ancillaries = market_obj.data_obj.config.get("plot_ancillary_services", True)
+        self.plot_storage_details = market_obj.data_obj.config.get("plot_storage_details", True)
         self.set_base_output_directory(output_path)
         
     def set_base_output_directory(self, base_folder):
@@ -69,7 +73,7 @@ class ResultManager():
         input_name = os.path.basename(os.path.normpath(self.system_name))
 
         # Create a timestamp for uniqueness and traceability
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
 
         # Construct the results path and ensure it exists
         results_dir = os.path.join(base_folder, f"PCM_{input_name}_{timestamp}")
@@ -131,18 +135,22 @@ class ResultManager():
         RT_output_json = {}
         # Iterate over simulation days present in DA results
         for sim_day in DA_res_dict.keys():
-            current_day_RT_merged = {}
-            # Each sim_day in RT_res_dict contains model groups (e.g., different RT models)
-            # Merge the .data dict for each group into a single per-day dict
-            for model_group in RT_res_dict[sim_day].values():
-                deep_merge_inplace(current_day_RT_merged, model_group.data)
             # Use ISO date string as the JSON key
             current_key = sim_day.isoformat()
-            RT_output_json[current_key] = copy.deepcopy(current_day_RT_merged)
-            DA_output_json[current_key] = DA_res_dict[sim_day].data
+            current_DA_data = DA_res_dict[sim_day].data
+            DA_output_json[current_key] = current_DA_data
             # Merge into cumulative dict used for plotting and summaries
-            deep_merge_inplace(merged_res_dict_RT, current_day_RT_merged)
-            deep_merge_inplace(merged_res_dict_DA, DA_res_dict[sim_day].data)
+            deep_merge_inplace(merged_res_dict_DA, copy.deepcopy(current_DA_data))
+
+            current_day_RT_merged = {}
+            if not self.simulate_DA_only:
+                # Each sim_day in RT_res_dict contains model groups (e.g., different RT models)
+                # Merge the .data dict for each group into a single per-day dict
+                for model_group in RT_res_dict[sim_day].values():
+                    deep_merge_inplace(current_day_RT_merged, model_group.data)
+                RT_output_json[current_key] = copy.deepcopy(current_day_RT_merged)
+                deep_merge_inplace(merged_res_dict_RT, current_day_RT_merged)
+            
         return DA_output_json, RT_output_json, merged_res_dict_RT, merged_res_dict_DA
 
     def set_subfolders(self, name):
@@ -186,9 +194,11 @@ class ResultManager():
         output_mode = self.result_interval
 
         result_exporter = ResultExporter()
-        _, full_RT_data, _, _ = self.merge_dicts(self.DA_output_data, self.RT_output_data)
-        result_exporter.export_excel_file(full_RT_data, self.all_config, self.base_result_directory)
-        print("Excel summary file saved to:", self.base_result_directory)
+        full_DA_data, full_RT_data, _, _ = self.merge_dicts(self.DA_output_data, self.RT_output_data)
+        if self.simulate_DA_only:
+            result_exporter.export_excel_file(full_DA_data, self.all_config, self.base_result_directory)
+        else:
+            result_exporter.export_excel_file(full_RT_data, self.all_config, self.base_result_directory)
         
         # Convert keys of dicts into DatetimeIndex
         orig_keys = sorted(self.DA_output_data.keys()) 
@@ -217,7 +227,10 @@ class ResultManager():
 
             # Extract subset from dicts
             DA_data = {k: self.DA_output_data[k] for k in time_keys}
-            RT_data = {k: self.RT_output_data[k] for k in time_keys}
+            if not self.simulate_DA_only:
+                RT_data = {k: self.RT_output_data[k] for k in time_keys}
+            else:
+                RT_data = {}
 
             # Merge DA + RT dicts
             DA_json_data, RT_json_data, merged_RT_data, merged_DA_data = self.merge_dicts(DA_data, RT_data)
@@ -235,16 +248,26 @@ class ResultManager():
             # Plots
             plotter_DA = ResultPlotter(merged_DA_data, current_directory, current_start_date, 60, self.plotly_enabled, "DA")
             plotter_DA.plot_dispatch_stackgraphs()
-            plotter_DA.plot_lmp()
-            plotter_DA.plot_reserves()
+            if self.simulate_DA_only:
+                plotter_DA.plot_costs()
+            if self.solved_pricing_problem:
+                plotter_DA.plot_lmp()
+            if self.plot_ancillaries:
+                plotter_DA.plot_reserves(self.solved_pricing_problem)
+            if self.simulate_DA_only and self.plot_storage_details:
+                plotter_DA.plot_storage_data(self.solved_pricing_problem)
 
-            plotter = ResultPlotter(merged_RT_data, current_directory, current_start_date, self.RT_resolution, self.plotly_enabled, "RT")
-            plotter.plot_dispatch_stackgraphs()
-            plotter.plot_costs()
-            plotter.plot_lmp()
-            plotter.plot_reserves()
-            plotter.plot_storage_data()
+            if not self.simulate_DA_only:
+                plotter = ResultPlotter(merged_RT_data, current_directory, current_start_date, self.RT_resolution, self.plotly_enabled, "RT")
+                plotter.plot_dispatch_stackgraphs()
+                plotter.plot_costs()
+                if self.solved_pricing_problem:
+                    plotter.plot_lmp()
+                if self.plot_ancillaries:
+                    plotter.plot_reserves(self.solved_pricing_problem)
+                if self.plot_storage_details:
+                    plotter.plot_storage_data(self.solved_pricing_problem)
 
-            print("Results saved to:", current_directory)
+        print("Results saved to:", self.base_result_directory)
 
 

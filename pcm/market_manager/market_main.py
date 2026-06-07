@@ -2,6 +2,7 @@ import os
 import pandas as pd
 from pyomo.environ import *
 from datetime import datetime
+from time import perf_counter
 from egret.data.model_data import ModelData
 from egret.common.log import logger as egret_logger
 from pcm.market_manager.egret_decorators import apply_egret_decorators
@@ -32,6 +33,8 @@ class MarketSimulator:
             data_obj (DataManager): DataManager instance with input data and configuration.
         """
         self.data_obj = data_obj
+        self.simulate_day_ahead = self.data_obj.config.get("simulate_DA_only", False)
+        self.solve_pricing_problem = self.data_obj.config.get("solve_pricing_problem", False)
         self.utils = MarketUtils
         self.DA_result_dict = {}
         self.RT_result_dict = {}
@@ -44,7 +47,8 @@ class MarketSimulator:
         """
         json_folder = self.data_obj.json_file_directory
         self.DA_model = ModelData.read(os.path.join(json_folder, 'DA_data.json'))
-        self.RT_model = ModelData.read(os.path.join(json_folder, 'RT_data.json'))
+        if not self.simulate_day_ahead:
+            self.RT_model = ModelData.read(os.path.join(json_folder, 'RT_data.json'))
     
     def uc_solver(self, egret_md, model_relaxed=False, return_pyomo_result=False, tee=False):
         """
@@ -92,30 +96,47 @@ class MarketSimulator:
         """
         input_data = self.data_obj
         total_days = (input_data.end_date - input_data.start_date).days + 1 - bool(input_data.DA_lookahead_periods)
-        DA_timekeys_set, RT_timekeys_set = self.utils.build_time_sets(
-            total_days, input_data.DA_lookahead_periods, input_data.RT_resolution, input_data.RT_lookahead_periods
-        )
-        final_RT_sol = None  # To hold the final RT solution for initializing the next day's DA model
+        if not self.data_obj.config.get("simulate_DA_only", False):
+            DA_timekeys_set, RT_timekeys_set = self.utils.build_time_sets(
+                total_days, input_data.DA_lookahead_periods, input_data.RT_resolution, input_data.RT_lookahead_periods
+            )
+        else:
+            print("Simulating Day-Ahead market only. Real-Time simulation will be skipped.")
+            DA_timekeys_set, _ = self.utils.build_time_sets(total_days, input_data.DA_lookahead_periods)
+
+        tic = perf_counter()
+        initializer_sol = None  # To hold the solution for initializing the next day's DA model
 
         for day in range(total_days):
             current_day = (input_data.start_date + pd.Timedelta(days=day)).date()
             DA_timekeys = DA_timekeys_set[day]
-            RT_timekeys = RT_timekeys_set[day]
 
             # Simulate Day-Ahead market for the current day
             md_DA_truncated, md_DA_full, pyomo_DA_sol = self._simulate_day_ahead(
-                current_day, DA_timekeys, day, final_RT_sol
+                current_day, DA_timekeys, day, initializer_sol
             )
             self.DA_result_dict[current_day] = md_DA_truncated
-            # Simulate Real-Time market for the current day
-            self.RT_result_dict[current_day], final_RT_sol = self._simulate_real_time(
-                current_day, RT_timekeys, day, pyomo_DA_sol, md_DA_full, RT_timekeys_set, final_RT_sol, self.data_obj.config.get("run_RTSCED_as")
-            )
+
+            if not self.simulate_day_ahead:
+                # Simulate Real-Time market for the current day
+                RT_timekeys = RT_timekeys_set[day]
+                self.RT_result_dict[current_day], final_RT_sol = self._simulate_real_time(
+                    current_day, RT_timekeys, day, pyomo_DA_sol, md_DA_full, RT_timekeys_set, initializer_sol, self.data_obj.config.get("run_RTSCED_as")
+                )
+                initializer_sol = final_RT_sol  
+            else:
+                initializer_sol = md_DA_truncated  # If only simulating DA, use truncated DA solution to initialize next day
 
         # Evaluate degradation for any BESS in the system
-        self.utils.evaluate_degradation(self.RT_model, self.RT_result_dict)
-        pass
-    
+        if self.data_obj.config.get("evaluate_degradation"):
+            if not self.simulate_day_ahead:
+                self.utils.evaluate_degradation(self.RT_model, self.RT_result_dict, scope = "RT")
+            else:
+                self.utils.evaluate_degradation(self.DA_model, self.DA_result_dict)
+
+        toc = perf_counter()
+        print(f"Total PCM simulation time: {toc - tic:.2f} seconds")
+        
     def _simulate_day_ahead(self, current_day, DA_timekeys, day, initializer_model):
         """
         Runs the Day-Ahead simulation for a single day.
@@ -131,27 +152,31 @@ class MarketSimulator:
         """
         md_DA = self.DA_model.clone_at_time_keys(list(map(str, DA_timekeys)))
         md_DA.data["current_market"] = "DA"
-
+        md_DA.data["system"]["timestamp"] = [f"{hour-1:02d}:00" for hour in self.data_obj.DA_periods]
         # Initialize DA model with previous day's RT status if not the first day
         if day > 0 and initializer_model is not None:
-            self.utils.populate_initial_status(initializer_model, md_DA, self.data_obj.RT_resolution)
+            self.utils.populate_initial_status(initializer_model, md_DA, self.data_obj.config.get("RT_resolution", 60))
         self.utils.fix_penalties_egret(md_DA, md_DA.data["system"], 1000)
         pyomo_DA_sol, md_DA_sol = self.uc_solver(md_DA, return_pyomo_result=True, tee = False)
 
-        if day == 0:
-            self.PTDF_holder = pyomo_DA_sol._PTDFs
+        # if day == 0:
+        #     self.PTDF_holder = pyomo_DA_sol._PTDFs
         # Pricing and cost evaluation
         pricing_model = md_DA_sol.clone()
-        self.utils.fix_all_binaries(md_DA_sol, pricing_model, 60, pricing_problem='LMP')
-        self.utils.fix_penalties_egret(pricing_model, pricing_model.data["system"], 1)
-
-        price_DA_sol = self.uc_solver(
-            pricing_model, model_relaxed=True, tee=False
-        )
+        if self.solve_pricing_problem:
+            self.utils.fix_all_binaries(md_DA_sol, pricing_model, 60, pricing_problem='LMP')
+            self.utils.fix_penalties_egret(pricing_model, pricing_model.data["system"], 1)
+            price_DA_sol = self.uc_solver(
+                pricing_model, model_relaxed=True, tee=False
+            )
+        else:
+            price_DA_sol = pricing_model
         md_DA_truncated = price_DA_sol.clone_at_time_indices(list(range(24)))
-
-        c_fixed, c_variable = self.utils.evaluate_system_costs_revenue(md_DA_truncated, md_DA_sol)
-        print(f'SCUC Solved for {current_day} ! Commitment cost = {c_fixed:.2f}, Predicted Production cost = {c_variable:.2f}')
+        if self.simulate_day_ahead and self.solve_pricing_problem:
+            c_fixed, c_variable = self.utils.evaluate_system_costs_revenue(md_DA_truncated, md_DA_truncated, evaluate_revenue = True, mode="multi_hour")
+        else:
+            c_fixed, c_variable = self.utils.evaluate_system_costs_revenue(md_DA_truncated, md_DA_truncated, mode = "multi_hour")
+        print(f'SCUC Solved for {current_day} ! DA Commitment cost = {c_fixed:.2f}, DA Production cost = {c_variable:.2f}')
 
         return md_DA_truncated, price_DA_sol, pyomo_DA_sol
 
@@ -232,14 +257,19 @@ class MarketSimulator:
 
                 # build pricing problem: fix binaries from integer solve, relax, and resolve for prices
                 price_RT_model = md_RT_current.clone()
-                self.utils.fix_all_binaries(md_RT_sol, price_RT_model, 60)
-                self.utils.fix_penalties_egret(price_RT_model, price_RT_model.data["system"], 1)
-                price_RT_sol = self.uc_solver(price_RT_model, model_relaxed=True, tee=False)
-
+                if self.solve_pricing_problem:
+                    self.utils.fix_all_binaries(md_RT_sol, price_RT_model, 60)
+                    self.utils.fix_penalties_egret(price_RT_model, price_RT_model.data["system"], 1)
+                    price_RT_sol = self.uc_solver(price_RT_model, model_relaxed=True, tee=False)
+                else:
+                    price_RT_sol = md_RT_sol.clone()
                 last_truncated = price_RT_sol.clone_at_time_indices([0])
 
             # evaluate costs vs DA schedule (md_DA_sol is expected)
-            _, c_variable = self.utils.evaluate_system_costs_revenue(last_truncated, md_DA_sol, evaluate_revenue = True)
+            if self.solve_pricing_problem:
+                _, c_variable = self.utils.evaluate_system_costs_revenue(last_truncated, md_DA_sol, evaluate_revenue = True)
+            else:
+                _, c_variable = self.utils.evaluate_system_costs_revenue(last_truncated, md_DA_sol)
             print(f"SCED Solved for {current_day} at {current_time}! Production cost = {c_variable:.2f}. Objective = {last_truncated.data['system'].get('total_cost', 0.0):.2f}")
             rt_results[current_time] = last_truncated
 

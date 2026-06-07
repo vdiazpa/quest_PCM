@@ -1,34 +1,32 @@
-DA_lookahead_periods: 12
-Flexible Ramp Down: timeseries
+solver: 'cplex' # "cplex", "gurobi", "glpk", "cbc", "xpress", "knitro"
+mipgap: 0.05 #MIP gap for the solver
+baseMVA: 100.0 # Base MVA for the system
+start_date: 01/01/2020
+end_date: 01/01/2020
+simulate_DA_only: False # If True, only runs the day-ahead SCUC and skips the real-time SCED
+DA_lookahead_periods: 6 #How many hours to lookahead in day-ahead SCUC (in hours
+RT_resolution: 5 # Duration of each Real-Time interval in minutes (e.g., 60 = hourly)
+RT_lookahead_periods: 12 # Number of future intervals (of RT_resolution length). make sure its smaller than DA_lookahead_periods
+run_RTSCED_as: "MILP" #Choices are "LP" or "MILP". LP is faster (as all commitment variables from DA are fixed) but MILP gives better commitment decisions
+solve_pricing_problem: True # Whether to solve the pricing problem after solving the unit commitment and economic dispatch problems. Setting this to False will speed up the simulation but will not generate locational marginal prices (LMPs) and other price signals.
+branch_contingency: True #impose N-1 transmission security constraints. True or False
+load_timeseries_aggregation_level: area #"node or "area". How your load_timeseries data is arranged columnwise
+# For operational reserves, select "None", "fixed", "percentage", or "timeseries" data
+# "fixed" = Fixed MW value, "percentage" = Demand percentage of system or zone, "timeseries" = user provided data for each period
+# "fixed and "percentage" are reserve values are extracted from "reserves_default_DA.csv and reserves_default_RT.csv" file and "timeseries" are extracted from from reserves_timeseries folder
+System Reserve: percentage
+Regulation Up: timeseries 
+Regulation Down: timeseries
+Spinning Reserve: timeseries
+NonSpinning Reserve: None
+Supplemental Reserve: None
 Flexible Ramp Up: timeseries
-NonSpinning Reserve: timeseries
-RT_lookahead_periods: 6
-RT_resolution: 5
-Regulation Down: fixed
-Regulation Up: fixed
-Spinning Reserve: fixed
-Supplemental Reserve: timeseries
-System Reserve: timeseries
-baseMVA: 100.0
-branch_contingency: false
-end_date: 07/10/2020
-fixed_renewable_types:
-- RTPV
-load_timeseries_aggregation_level: area
-mipgap: 0.001
-output_interval: at_once
-plotly_plots: true
-renewable_generator_types:
-- PV
-- RTPV
-- HYDRO
-- WIND
-run_RTSCED_as: LP
-solver: gurobi
-start_date: 07/10/2020
-storage_AS_participation_level: 4
-thermal_generator_types:
-- CT
-- CC
-- STEAM
-- NUCLEAR
+Flexible Ramp Down: timeseries
+
+storage_AS_participation_level: 4 #set between 0 and 4, how many ancillary services can ESS participate in one time-period (only applicable to batteries and pumped hydro)
+evaluate_degradation: False #whether to evaluate battery degradation in the simulation. Not applicable for generic and pumped hydro. 
+
+output_interval: "at_once" #how often to generate plots and json output. options are "at_once", "daily", "weekly", "monthly"
+plotly_plots: True #generate html plots for better illustration. takes longer time
+plot_ancillary_services: False #whether to generate plots for ancillary services (regulation, reserves, ramping)
+plot_storage_details: True #whether to generate detailed plots for each storage (SoC, costs, revenue, etc.)

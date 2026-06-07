@@ -23,6 +23,7 @@ class DataManager:
     Attributes:
         folder_path (str): Path to the data directory containing input files.
         yaml_path (str): Path to the YAML configuration file.
+        optional_json_dir (str): Optional path to output directory for JSON files. Defaults to 'json_dumps' within the data folder.
         csv_data (dict): Dictionary mapping relative file paths to pandas DataFrames.
         constant_data_dict (dict): Static system data (elements and system-wide parameters).
         DA_timeseries (dict): Time series data for the Day-Ahead market.
@@ -37,7 +38,7 @@ class DataManager:
         json_file_directory (str): Directory where JSON files are exported.
     """
 
-    def __init__(self, folder_path, yaml_path):
+    def __init__(self, folder_path, yaml_path, optional_json_dir = None):
         """
         Initialize the DataManager object.
 
@@ -54,14 +55,16 @@ class DataManager:
         self.csv_data = {}
         self.utils = input_utils
 
+        # Load configuration and all CSV files
+        self._load_yaml_file()
+        self._load_all_csv_files()
+
         # Initialize main data structures for system constants and time series
         self.constant_data_dict = {"elements": {}, "system": {}}
         self.DA_timeseries = {"elements": {}, "system": {}}
         self.RT_timeseries = {"elements": {}, "system": {}}
-
-        # Load configuration and all CSV files
-        self._load_yaml_file()
-        self._load_all_csv_files()
+        # Parse all static elements
+        self._populate_system_params()
 
         # Instantiate data parsers for each domain
         self.networkparser = NetworkParser(self.config, self.csv_data)
@@ -69,8 +72,15 @@ class DataManager:
         self.reserveparser = ReserveParser(self.config, self.csv_data)
         self.storageparser = StorageParser(self.config, self.csv_data)
 
-    # -------------------------------------------------------------------------
+        # Prepare output directory
+        if optional_json_dir:
+            json_folder = optional_json_dir
+        else:
+            json_folder = os.path.join(self.folder_path, "json_dumps")
+        os.makedirs(json_folder, exist_ok=True)
+        self.json_file_directory = json_folder
 
+    # -------------------------------------------------------------------------
     def _load_yaml_file(self):
         """
         Load the YAML configuration file into self.config.
@@ -81,9 +91,9 @@ class DataManager:
         """
         with open(self.yaml_path, 'r') as file:
             self.config = yaml.safe_load(file)
+        self.simulate_DA_only = self.config.get("simulate_DA_only", False)
 
     # -------------------------------------------------------------------------
-
     def _load_all_csv_files(self):
         """
         Load all CSV files from the data directory into pandas DataFrames.
@@ -110,7 +120,6 @@ class DataManager:
         print('Completed reading csv files!')
 
     # -------------------------------------------------------------------------
-
     def _populate_system_params(self):
         """
         Populate time parameters for DA and RT models based on the YAML configuration.
@@ -127,39 +136,42 @@ class DataManager:
         self.start_date = pd.to_datetime(self.config["start_date"], format="%m/%d/%Y")
         self.end_date = pd.to_datetime(self.config["end_date"], format="%m/%d/%Y")
 
-        # Extract lookahead and resolution parameters
-        self.DA_lookahead_periods = self.config["DA_lookahead_periods"]
-        self.RT_lookahead_periods = self.config["RT_lookahead_periods"]
-        self.RT_resolution = self.config["RT_resolution"]
+        # Set system baseMVA and ancillary service parameters
+        self.constant_data_dict["system"]["baseMVA"] = self.config.get("baseMVA", 100.0)
 
+        # Extract lookahead and resolution parameters
+        self.DA_lookahead_periods = self.config["DA_lookahead_periods"] 
         # Extend end date by one day if DA lookahead is used
         if self.DA_lookahead_periods > 0:
             self.end_date += pd.Timedelta(days=1)
-
         # Calculate number of simulation days
         num_days = (self.end_date - self.start_date).days + 1
-
         # Define DA periods (hourly)
         self.DA_periods = list(range(1, 25))  # 1 to 24 inclusive
-
-        # Define RT periods (sub-hourly, e.g., every 5 minutes)
-        base_RT_periods = 5  # base period in minutes
-        periods_per_day = int(24 * 60 / base_RT_periods) 
-        step = self.RT_resolution // base_RT_periods
-        self.RT_periods = list(range(1, periods_per_day + 1, step))
-
-        # Generate time keys for DA and RT timeseries
+        # Generate time keys for DA timeseries
         time_keys_DA = list(range(1, len(self.DA_periods) * num_days + 1))
-        time_keys_RT = list(range(1, len(self.RT_periods) * num_days + 1))
         self.DA_timeseries["system"]["time_keys"] = list(map(str, time_keys_DA))
-        self.RT_timeseries["system"]["time_keys"] = list(map(str, time_keys_RT))
-
         # Set time period lengths (in minutes)
         self.DA_timeseries["system"]["time_period_length_minutes"] = 60
-        self.RT_timeseries["system"]["time_period_length_minutes"] = self.RT_resolution
 
-        # Set system baseMVA and ancillary service parameters
-        self.constant_data_dict["system"]["baseMVA"] = self.config.get("baseMVA", 100.0)
+        # Define RT periods (sub-hourly, e.g., every 5 minutes)
+        if not self.simulate_DA_only:
+            self.RT_lookahead_periods = self.config["RT_lookahead_periods"]
+            if self.RT_lookahead_periods > 0 and self.DA_lookahead_periods == 0:
+                raise ValueError("RT lookahead periods cannot be greater than 0 if DA lookahead periods is 0. Please adjust your configuration.")
+            if self.RT_lookahead_periods == 0:
+                raise Warning("RT lookahead periods is set to 0. Storage SOC tracking operations will affect LMPs.")
+            self.RT_resolution = self.config["RT_resolution"]
+            base_RT_periods = 5  # base period in minutes
+            periods_per_day = int(24 * 60 / base_RT_periods) 
+            step = self.RT_resolution // base_RT_periods
+            self.RT_periods = list(range(1, periods_per_day + 1, step))
+            time_keys_RT = list(range(1, len(self.RT_periods) * num_days + 1))
+            self.RT_timeseries["system"]["time_keys"] = list(map(str, time_keys_RT))
+            self.RT_timeseries["system"]["time_period_length_minutes"] = self.RT_resolution
+        else:
+            self.RT_periods = []
+            time_keys_RT = []
 
         # Store a dict to pass on to helper classes
         self.time_settings = {
@@ -170,7 +182,6 @@ class DataManager:
             'DA_timekeys': time_keys_DA,
             'RT_timekeys': time_keys_RT
         }
-
     # -------------------------------------------------------------------------
 
     def sequential_data_parser(self):
@@ -184,9 +195,7 @@ class DataManager:
         Populates:
             self.constant_data_dict, self.DA_timeseries, self.RT_timeseries
         """
-        # Parse all system elements and time series data
-        self._populate_system_params()
-
+        
         # Network (buses, branches, contingencies, loads)
         self.networkparser.parse_buses()
         self.constant_data_dict["elements"]["bus"] = self.networkparser.bus_dict
@@ -240,7 +249,7 @@ class DataManager:
             
     # -------------------------------------------------------------------------
 
-    def export_input_json(self):
+    def export_input_json(self, optional_dir = None):
         """
         Export the processed input data as EGRET-compatible JSON files.
 
@@ -258,17 +267,11 @@ class DataManager:
         # Parse and organize all data before exporting
         self.sequential_data_parser()
 
-        # Merge constant and timeseries dictionaries for DA and RT
+        # Merge constant and timeseries dictionaries for DA
         final_DA_dict = self.utils.deep_merge(self.constant_data_dict, self.DA_timeseries)
-        final_RT_dict = self.utils.deep_merge(self.constant_data_dict, self.RT_timeseries)
-
-        # Prepare output directory
-        json_folder = os.path.join(self.folder_path, "json_dumps")
-        os.makedirs(json_folder, exist_ok=True)
-        self.json_file_directory = json_folder
-
+        
         # Write DA JSON
-        output_path_DA = os.path.join(json_folder, "DA_data.json")
+        output_path_DA = os.path.join(self.json_file_directory, "DA_data.json")
         with open(output_path_DA, "w") as f:
             dumper = json.dumps(final_DA_dict, indent=2, separators=(",", ": "))
             # Collapse lists (any [...] across lines -> one line)
@@ -277,15 +280,17 @@ class DataManager:
                             dumper, flags=re.DOTALL)
             f.write(dumper)
 
-        # Write RT JSON
-        output_path_RT = os.path.join(json_folder, "RT_data.json")
-        with open(output_path_RT, "w") as f:
-            dumper = json.dumps(final_RT_dict, indent=2, separators=(",", ": "))
-            # Collapse lists (any [...] across lines -> one line)
-            dumper = re.sub(r"\[\s+([^]]*?)\s+\]",
-                            lambda m: "[" + " ".join(m.group(1).split()) + "]",
-                            dumper, flags=re.DOTALL)
-            f.write(dumper)
+        if not self.simulate_DA_only:
+            # Prepare and write RT JSON
+            final_RT_dict = self.utils.deep_merge(self.constant_data_dict, self.RT_timeseries)
+            output_path_RT = os.path.join(self.json_file_directory, "RT_data.json")
+            with open(output_path_RT, "w") as f:
+                dumper = json.dumps(final_RT_dict, indent=2, separators=(",", ": "))
+                # Collapse lists (any [...] across lines -> one line)
+                dumper = re.sub(r"\[\s+([^]]*?)\s+\]",
+                                lambda m: "[" + " ".join(m.group(1).split()) + "]",
+                                dumper, flags=re.DOTALL)
+                f.write(dumper)
 
         print(f'EGRET-compatible input JSON files created!\n')
 

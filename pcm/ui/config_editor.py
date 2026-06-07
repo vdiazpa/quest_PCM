@@ -66,7 +66,7 @@ class ConfigEditorDialog(QDialog):
             QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow
         )
         self.right_form.setHorizontalSpacing(12)
-        self.right_form.setVerticalSpacing(8)
+        self.right_form.setVerticalSpacing(20)
 
         # --- Wrap in containers ---
         left_container = QWidget()
@@ -85,7 +85,7 @@ class ConfigEditorDialog(QDialog):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(left_container)
         splitter.addWidget(right_container)
-        splitter.setSizes([600, 350])
+        splitter.setSizes([300, 300])
         splitter.setChildrenCollapsible(False)
 
         # --- Scroll area around splitter ---
@@ -255,6 +255,7 @@ class ConfigEditorDialog(QDialog):
             help_text="Select the solver to use for optimization. Recommended 'cplex' or 'gurobi'",
             column="left",
         )
+        add_float("mipgap", 0.01, help_text="MIP gap for the solver", column="left")
         add_float("baseMVA", 100.0, help_text="Base MVA for the system", column="left")
         add_date(
             "start_date",
@@ -269,9 +270,19 @@ class ConfigEditorDialog(QDialog):
         add_int(
             "DA_lookahead_periods",
             12,
-            6,
+            0,
             24,
             help_text="How many hours to look ahead in day-ahead SCUC (6-24 hours)",
+            column="left",
+        )
+        add_checkbox(
+            "solve_pricing_problem",
+            help_text="Whether to solve the pricing problem after solving the unit commitment and economic dispatch problems",
+            column="left",
+        )
+        add_checkbox(
+            "simulate_DA_only",
+            help_text="If selected, only runs the day-ahead SCUC and skips the real-time SCED. If selected, ignore the next three options below.",
             column="left",
         )
         add_int(
@@ -286,12 +297,11 @@ class ConfigEditorDialog(QDialog):
         add_int(
             "RT_lookahead_periods",
             1,
-            1,
+            0,
             100,
-            help_text="How many periods to look ahead in real-time SCED",
+            help_text="How many periods to look ahead in real-time SCED. At least 1 is needed for proper storage operation.",
             column="left",
         )
-        add_float("mipgap", 0.01, help_text="MIP gap for the solver", column="left")
         add_dropdown(
             "run_RTSCED_as",
             ["LP", "MILP"],
@@ -304,39 +314,25 @@ class ConfigEditorDialog(QDialog):
             help_text="How your load_timeseries data is arranged columnwise",
             column="left",
         )
+        add_checkbox(
+            "branch_contingency",
+            help_text="Enable N-1 transmission security constraints",
+            column="right",
+        )
         add_int(
             "storage_AS_participation_level",
             4,
             0,
             4,
-            help_text="How many ancillary services can ESS participate in one time-period",
-            column="left",
+            help_text="How many ancillary services can ESS participate in one time-period. Only applicable for battery and pumped hydro storage.",
+            column="right",
         )
         add_checkbox(
-            "branch_contingency",
-            help_text="Enable N-1 transmission security constraints",
-            column="left",
-        )
-
-        add_list(
-            "thermal_generator_types",
-            items_list=["CT", "CC", "STEAM", "NUCLEAR"],
-            help_text="Select the thermal unit types in gen.csv file",
+            "evaluate_degradation",
+            help_text="Whether to evaluate battery degradation in the simulation. Not applicable for generic and pumped hydro.",
             column="right",
         )
-        add_list(
-            "renewable_generator_types",
-            items_list=["PV", "RTPV", "CSP", "HYDRO", "WIND"],
-            help_text="Select all renewable unit types in gen.csv file",
-            column="right",
-        )
-        add_list(
-            "fixed_renewable_types",
-            items_list=["RTPV"],
-            help_text="Select all fixed-output renewable unit types in gen.csv file",
-            column="right",
-        )
-
+        
         reserve_options = ["None", "fixed", "percentage", "timeseries"]
         reserve_keys = [
             "System Reserve",
@@ -353,18 +349,27 @@ class ConfigEditorDialog(QDialog):
                 key,
                 reserve_options,
                 help_text="fixed and percentage are extracted from reserves_default_DA.csv and reserves_default_RT.csv, timeseries from reserves_timeseries folder",
-                column="left",
+                column="right",
             )
-
+        add_dropdown(
+            "output_interval",
+            ["at_once", "daily", "weekly", "monthly"],
+            help_text="How often to generate plots and json output",
+            column="right",
+        )
         add_checkbox(
             "plotly_plots",
             help_text="Generate html plots for better illustration (takes longer time)",
             column="right",
         )
-        add_dropdown(
-            "output_interval",
-            ["at_once", "daily", "weekly", "monthly"],
-            help_text="How often to generate plots and json output",
+        add_checkbox(
+            "plot_ancillary_services",
+            help_text="Whether to generate plots for ancillary services clearing",
+            column="right",
+        )
+        add_checkbox(
+            "plot_storage_details",
+            help_text="Whether to generate plots for each storage",
             column="right",
         )
 

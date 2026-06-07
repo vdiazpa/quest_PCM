@@ -50,7 +50,7 @@ class ReserveParser:
             "Flexible Ramp Down": "flexible_ramp_down_requirement",
             "Supplemental Reserve": "supplemental_reserve_requirement"
         }
-
+        simulate_DA_only = self.config.get("simulate_DA_only", False)
         df_DA = self.data_df.get("DA_reserves_fixed_percentage")
         df_RT = self.data_df.get("RT_reserves_fixed_percentage")
         df_deploy = self.data_df.get("reserve_deployment")
@@ -69,10 +69,11 @@ class ReserveParser:
         self._parse_reserves(df_DA, total_demand, DA_load_dict, self.DA_system_reserve, self.DA_area_reserve, system_areas, time_settings, "DA")
 
         # RT reserves
-        self._parse_reserves(df_RT, total_demand, RT_load_dict, self.RT_system_reserve, self.RT_area_reserve, system_areas, time_settings, "RT")
+        if not simulate_DA_only:
+            self._parse_reserves(df_RT, total_demand, RT_load_dict, self.RT_system_reserve, self.RT_area_reserve, system_areas, time_settings, "RT")
 
-        df_res_deployed = self.data_df.get("reserve_deployment")
-        self._parse_reserve_deployment(df_res_deployed, time_settings)
+            df_res_deployed = self.data_df.get("reserve_deployment")
+            self._parse_reserve_deployment(df_res_deployed, time_settings)
 
     def _parse_reserves(self, df, total_demand, load_dict, system_reserve_dict, area_reserve_dict, system_areas, time_settings, timeframe):
         

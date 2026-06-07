@@ -64,10 +64,11 @@ QuESt PCM reads system input data from CSV files. To ensure the inputs are parse
 |--------------------------|------------------------------------------------------------------|
 | GEN UID                  | Unique generator ID   |
 | Bus ID                   | Connection Bus ID                                                |
-| Gen ID                   | Index of generator units at each bus                             |                                   |
-| Unit Type                | Unit type                                                        |
-| Unit Category               | Category of unit within unit type  
-| Fuel                     | Unit fuel                                                        |
+| Gen ID                   | Index of generator units at each bus                             |                                   
+| Type                   | Broad generation technology classification. Valid options are Thermal, Renewable, and Fixed Renewable.                            |  
+| Unit Type                |  Specific technology or equipment type within the selected Type (e.g., Combined Cycle (CC), Solar PV, Wind).                                                |
+| Unit Category               |Subclassification of a Unit Type used to group similar units based on fuel (e.g. Gas CC).
+| Fuel                     | Primary fuel or energy source used by the unit (e.g., Natural Gas, Coal, Solar, Wind).                                                    |
 | Initial Power MW                  | Power generation at simulation start    |
 | Initital status Hr                 | Initial on/off duration before simulation start (positive = on, negative = off)
 | PMax MW                  | Maximum real power injection (Unit Capacity)                     |
@@ -122,7 +123,7 @@ In the configuration YAML file, set the `load_timeseries_aggregation_level` para
 
 [Back to Top](#top)
 ## `renewables_timeseries/`
-<a id="load_timeseries"></a>
+<a id="ren_timeseries"></a>
 
 This folder contains two CSV files.
 `renewables_timeseries_DA.csv` provides the forecasted day-ahead capacity of renewable energy resources (RER), while `renewables_timeseries_RT.csv` contains the actual avalable RER capacitites. Data must be provided for all generators whose `Unit Type` in [gen.csv](#gen) is listed under `renewable_types` or `fixed_renewable_types` in the YAML configuration. Each CSV is organized by columns, where each column corresponds to a generator and is labeled using its `Gen UID`.

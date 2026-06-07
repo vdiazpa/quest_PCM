@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 from matplotlib.ticker import MultipleLocator
 import matplotlib.dates as mdates
 import plotly.graph_objects as go
@@ -6,40 +7,42 @@ import pandas as pd
 import os
 import datetime
 
-def add_dual_xaxis(time_resolution, start_date, ax):
-    """
-    Add two x-axes to a Matplotlib plot:
-    - Inner axis: time of day.
-    - Outer axis: daily ticks showing the date.
+def format_time_axis(ax, x_values):
+    """Dynamically format x-axis based on time span."""
     
-    Parameters
-    ----------
-    ax : matplotlib.axes.Axes
-        The axes object to add the dual x-axis to.
-    """
-    # --- Inner axis formatting ---
-    minutes = time_resolution
-    start_date =  start_date + datetime.timedelta(minutes=time_resolution)
-    ax.xaxis.set_major_locator(mdates.AutoDateLocator())
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+    # Ensure datetime
+    x = pd.to_datetime(x_values)
+    span_days = (x.max() - x.min() + datetime.timedelta(days=1)).days
 
-    for label in ax.get_xticklabels():
-        label.set_rotation(45)
-        label.set_ha("right")
-        label.set_fontsize(11)
+    if span_days <= 2:
+        # High resolution (hours)
+        ax.xaxis.set_major_locator(mdates.HourLocator(byhour=range(0, 24, 6)) 
+        )
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M\n%b %d'))
+        ax.xaxis.set_minor_locator(mdates.HourLocator(byhour=range(0, 24, 3)))
 
-    # --- Outer axis (dates every 24 hours) ---
-    ax2 = ax.twiny()
-    ax2.set_xlim(ax.get_xlim())
-    ax2.xaxis.set_major_locator(mdates.DayLocator(interval=1))
-    ax2.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d"))
-    ax2.tick_params(axis='x', labelsize=14) 
-    # Push the outer axis below
-    ax2.spines["bottom"].set_position(("outward", 45))
-    ax2.xaxis.set_ticks_position("bottom")
-    ax2.xaxis.set_label_position("bottom")
-    ax2.set_xlabel("DateTime", fontsize=20)
-    return ax, ax2
+    elif span_days <= 14:
+        # Medium (days)
+        ax.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
+        ax.xaxis.set_minor_locator(mdates.HourLocator(byhour=range(0, 24, 12)))
+
+    elif span_days <= 60:
+        # Weeks
+        ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
+        ax.xaxis.set_minor_locator(mdates.DayLocator(interval=1))
+    else:
+        # Long horizon (months)
+        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %Y'))
+        ax.xaxis.set_minor_locator(mdates.DayLocator(interval=15))
+
+    ax.grid(True, which='major', axis='x', linestyle='-', alpha=0.6)
+    ax.grid(True, which='minor', axis='x', linestyle='--', alpha=0.3)
+    ax.tick_params(axis='x', which='major')
+    ax.tick_params(axis='x', which='minor', length=0)
+    plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
 
 def plot_stackgraphs(result, reference_vals, plot_dict, plot_name, plotly_enabled = True, png_enabled = True, subdir_name = ""):
     """Create stacked dispatch/cost plots (PNG and Plotly outputs).
@@ -111,8 +114,7 @@ def plot_stackgraphs(result, reference_vals, plot_dict, plot_name, plotly_enable
         ax.tick_params(axis='both', which='major', labelsize=14)
         ax.margins(x=0, y=0)
         ax.grid(True, linestyle='--', alpha=0.7)
-        add_dual_xaxis(plot_dict["time_resolution"], plot_dict["start_date"], ax)
-        #plt.show()
+        format_time_axis(ax, plot_dict["plotter_x_axis"])
         if subdir_name:
             os.makedirs(os.path.join(plot_dict["result_directory"], "png_plots", subdir_name), exist_ok=True)
         plt.savefig(os.path.join(plot_dict["result_directory"], "png_plots", subdir_name, plot_name + ".png"), bbox_inches='tight', dpi=600, pad_inches=0)
@@ -241,7 +243,7 @@ def plot_lines(result, plot_dict, plot_name, plotly_enabled = True, png_enabled 
         ax.tick_params(axis='both', which='major', labelsize=14)
         ax.margins(x=0, y=0)
         ax.grid(True, linestyle='--', alpha=0.7)
-        add_dual_xaxis(plot_dict["time_resolution"], plot_dict["start_date"], ax)
+        format_time_axis(ax, plot_dict["plotter_x_axis"])
         if subdir_name:
             os.makedirs(os.path.join(plot_dict["result_directory"], "png_plots", subdir_name), exist_ok=True)
         plt.savefig(os.path.join(plot_dict["result_directory"], "png_plots", subdir_name, plot_name + ".png"), bbox_inches='tight', dpi=600, pad_inches=0)
@@ -304,9 +306,23 @@ def plot_lines(result, plot_dict, plot_name, plotly_enabled = True, png_enabled 
             y=1.15,
             showactive=True)] if n_traces > 1 else None 
     )
+    base_dir = plot_dict["result_directory"]
+
+    plotly_dir = os.path.join(base_dir, "plotly_plots")
+    png_dir = os.path.join(base_dir, "png_plots")
+    # If plotly is not enabled, we might need need to generate html plot for LMP
+    if os.path.isdir(plotly_dir):
+        base_save_dir = plotly_dir
+    else:
+        base_save_dir = png_dir
+
     if subdir_name:
-        os.makedirs(os.path.join(plot_dict["result_directory"], "plotly_plots", subdir_name), exist_ok=True)
-    fig.write_html(os.path.join(plot_dict["result_directory"], "plotly_plots", subdir_name, plot_name + ".html"))
+        save_dir = os.path.join(base_save_dir, subdir_name)
+    else:
+        save_dir = base_save_dir
+
+    os.makedirs(save_dir, exist_ok=True)
+    fig.write_html(os.path.join(save_dir, f"{plot_name}.html"))
 
      
 

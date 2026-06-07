@@ -104,13 +104,14 @@ class ResultExporter:
                         lambda m: "[" + " ".join(m.group(1).split()) + "]", 
                         dumper, flags=re.DOTALL)
             f.write(dumper)
-        with open(os.path.join(output_directory, "RT_results.json"), "w") as f:
-            dumper = json.dumps(json_safe_RT, indent=2, separators=(",", ": "))
-            # Collapse lists (any [...] across lines -> one line)
-            dumper = re.sub(r"\[\s+([^]]*?)\s+\]", 
-                        lambda m: "[" + " ".join(m.group(1).split()) + "]", 
-                        dumper, flags=re.DOTALL)
-            f.write(dumper)
+        if RT_output:
+            with open(os.path.join(output_directory, "RT_results.json"), "w") as f:
+                dumper = json.dumps(json_safe_RT, indent=2, separators=(",", ": "))
+                # Collapse lists (any [...] across lines -> one line)
+                dumper = re.sub(r"\[\s+([^]]*?)\s+\]", 
+                            lambda m: "[" + " ".join(m.group(1).split()) + "]", 
+                            dumper, flags=re.DOTALL)
+                f.write(dumper)
 
     def export_excel_file(self, RT_data, config, output_directory):
         """Create an Excel summary workbook from real-time results.
@@ -136,6 +137,7 @@ class ResultExporter:
 
         congestion_totals = []
         contingency_totals = []
+        curtailment_timestamp_totals = []
         for day, day_dict in RT_data.items():
 
             time_factor = day_dict["system"]["time_period_length_minutes"] / 60
@@ -161,11 +163,23 @@ class ResultExporter:
             total_load = 0
             total_curtailment = 0
             total_over_generation = 0
+
+            curtailment_vals_timestamp = [0] * len(day_dict["system"]["timestamp"])
             for bus_num, bus_data in bus_dict.items():
                 total_load += sum(bus_data["pl"]["values"]) * time_factor
                 curtailment_vals = bus_data.get("p_balance_violation", {}).get("values", [])
                 total_curtailment += sum(v for v in curtailment_vals if v > 0) * time_factor
-                
+                for i, v in enumerate(curtailment_vals):
+                    if v > 1e-3:
+                        curtailment_vals_timestamp[i] += v * time_factor
+            
+            for i, ts in enumerate(day_dict["system"]["timestamp"]):
+                temp_row = {}
+                temp_row["Date"] = day
+                temp_row["Time"] = ts
+                temp_row["Load Curtailed (MWh)"] = curtailment_vals_timestamp[i]
+                curtailment_timestamp_totals.append(temp_row)  
+
             summary_row["Total Demand (MWh)"] = total_load
             summary_row["Load Curtailed (MWh)"] = total_curtailment
             
@@ -409,6 +423,7 @@ class ResultExporter:
                     format="%Y-%m-%d %H:%M"
                 )
             df_contingency = df_contingency.loc[dt.sort_values().index]
+        df_curtailment_timestamp = pd.DataFrame(curtailment_timestamp_totals)
 
         with pd.ExcelWriter(os.path.join(output_directory, "simulation_summary.xlsx"), engine="openpyxl") as writer:
             df_daily_summary.to_excel(writer, sheet_name="daily_summary", index=False)
@@ -417,6 +432,7 @@ class ResultExporter:
             df_storage.to_excel(writer, sheet_name="Storage", index=False)
             df_congestion.to_excel(writer, sheet_name="High Line Loadings", index=False)
             df_contingency.to_excel(writer, sheet_name="Contingencies", index=False)
+            df_curtailment_timestamp.to_excel(writer, sheet_name="Curtailment Timestamp", index=False)
             # Enable header text wrapping for all sheets
             # Format all sheets
             for sheet_name, df in [
@@ -426,6 +442,7 @@ class ResultExporter:
                 ("Storage", df_storage),
                 ("High Line Loadings", df_congestion),
                 ("Contingencies", df_contingency),
+                ("Curtailment Timestamp", df_curtailment_timestamp),
             ]:
                 ws = writer.sheets[sheet_name]
 
@@ -435,3 +452,4 @@ class ResultExporter:
                     cell.alignment = cell.alignment.copy(wrap_text=True)
 
                 ws.row_dimensions[header_row].height = None  # Let Excel auto-adjust height
+            print("Excel summary file saved to:", os.path.join(output_directory, "simulation_summary.xlsx"))

@@ -1,10 +1,10 @@
-GEN UID,Bus ID,Unit Type,Category,Fuel,Initial Power MW,Initial Time Hr,PMax MW,PMin MW,Min Down Time Hr,Min Up Time Hr,Ramp Rate MW/Min,Start Time Cold Hr,Start Time Warm Hr,Start Time Hot Hr,Start Heat Cold MBTU,Start Heat Warm MBTU,Start Heat Hot MBTU,Non Fuel Start Cost $,Fuel Price $/MMBTU,Output_pct_0,Output_pct_1,Output_pct_2,Output_pct_3,Output_pct_4,HR_avg_0,HR_incr_1,HR_incr_2,HR_incr_3,HR_incr_4,Fast start,AGC capable,Reg offer $/MW/hr,Pmax AGC MW,Pmin AGC MW,Spin offer MW,Spin offer $/MW/hr,NonSpin offer MW,NonSpin offer $/MW/hr,Supp offer MW,Supp offer $/MW/hr
-3_CT,3,CT,Gas CT,NG,14,24.5,20,8,1,1,3,,,1,,,51.75,0,0.75,0.4,0.6,0.8,1,,135722.5,97862.5,98072.5,107135,,1,1,15,18,10,20,10,20,10,20,5
-10_STEAM,10,STEAM,Coal,Coal,0,-24,76,30,4,8,2,12,10,4,11383.41,10488.35,7355.42,0,1,0.394736842,0.596052632,0.798684211,1,,30166.66667,14402.61434,17182.46753,18283.66017,,0,0,0,70,35,76,5,76,5,76,5
-4_CC,4,CC,Gas CC,NG,40,24,100,10,3,3,3.7,,,3,,,5665.23,0,0.5,0.4,0.6,0.8,1,,51019.54545,26818.18182,29550.90909,30308.18182,,1,1,15,90,12,100,5,100,5,100,5
-4_STEAM,4,STEAM,Oil ST,Oil,0,-24,12,5,2,4,1,12,4,2,703.76,455.37,393.28,0,1.5,0.416666667,0.608333333,0.808333333,1,,179457.9999,124504.3483,125050,133643.478,,0,1,15,10,6,12,5,12,5,12,5
-1_NUCLEAR,1,NUCLEAR,Nuclear,Nuclear,50,24,50,50,48,24,20,,,48,78978,9999,9999,0,0.81035,0.99,0.993333333,0.996666667,1,NA,10000,0,0,0,,0,0,0,0,0,0,5,0,5,0,5
-10_PV,10,PV,Solar PV,Solar,0,0,25.9,0,,,,,,,,,,0,,,,,,,,,,,,,,,,,,,,,,
-2_RTPV,2,RTPV,Solar RTPV,Solar,0,0,9.3,0,,,,,,,,,,0,,,,,,,,,,,,,,,,,,,,,,
-1_HYDRO,1,HYDRO,Hydro,Hydro,0,0,50,0,,,,,,,,,,0,,,,,,,,,,,,,,,,,,,,,,
-4_WIND,4,WIND,Wind,Wind,0,0,12,0,,,,,,,,,,0,,,,,,,,,,,,,,,,,,,,,,
+GEN UID,Bus ID,Type,Unit Type,Category,Fuel,Initial Power MW,Initial Time Hr,PMax MW,PMin MW,Min Down Time Hr,Min Up Time Hr,Ramp Rate MW/Min,Start Time Cold Hr,Start Time Warm Hr,Start Time Hot Hr,Start Heat Cold MBTU,Start Heat Warm MBTU,Start Heat Hot MBTU,Non Fuel Start Cost $,Fuel Price $/MMBTU,Output_pct_0,Output_pct_1,Output_pct_2,Output_pct_3,Output_pct_4,HR_avg_0,HR_incr_1,HR_incr_2,HR_incr_3,HR_incr_4,Fast start,AGC capable,Reg offer $/MW/hr,Pmax AGC MW,Pmin AGC MW,Spin offer MW,Spin offer $/MW/hr,NonSpin offer MW,NonSpin offer $/MW/hr,Supp offer MW,Supp offer $/MW/hr
+3_CT,3,Thermal,CT,Gas CT,NG,14,24.5,20,8,1,1,3,,,1,,,51.75,0,0.75,0.4,0.6,0.8,1,,135722.5,97862.5,98072.5,107135,,1,1,15,18,10,20,10,20,10,20,5
+10_STEAM,10,Thermal,STEAM,Coal,Coal,0,-24,76,30,4,8,2,12,10,4,11383.41,10488.35,7355.42,0,1,0.394736842,0.596052632,0.798684211,1,,30166.66667,14402.61434,17182.46753,18283.66017,,0,0,0,70,35,76,5,76,5,76,5
+4_CC,4,Thermal,CC,Gas CC,NG,40,24,100,10,3,3,3.7,,,3,,,5665.23,0,0.5,0.4,0.6,0.8,1,,51019.54545,26818.18182,29550.90909,30308.18182,,1,1,15,90,12,100,5,100,5,100,5
+4_STEAM,4,Thermal,STEAM,Oil ST,Oil,0,-24,12,5,2,4,1,12,4,2,703.76,455.37,393.28,0,1.5,0.416666667,0.608333333,0.808333333,1,,179457.9999,124504.3483,125050,133643.478,,0,1,15,10,6,12,5,12,5,12,5
+1_NUCLEAR,1,Thermal,NUCLEAR,Nuclear,Nuclear,50,24,50,50,48,24,20,,,48,78978,9999,9999,0,0.81035,0.99,0.993333333,0.996666667,1,NA,10000,0,0,0,,0,0,0,0,0,0,5,0,5,0,5
+10_PV,10,Renewable,PV,Solar PV,Solar,0,0,25.9,0,,,,,,,,,,0,,,,,,,,,,,,,,,,,,,,,,
+2_RTPV,2,Fixed Renewable,RTPV,Solar RTPV,Solar,0,0,9.3,0,,,,,,,,,,0,,,,,,,,,,,,,,,,,,,,,,
+1_HYDRO,1,Renewable,HYDRO,Hydro,Hydro,0,0,50,0,,,,,,,,,,0,,,,,,,,,,,,,,,,,,,,,,
+4_WIND,4,Renewable,WIND,Wind,Wind,0,0,12,0,,,,,,,,,,0,,,,,,,,,,,,,,,,,,,,,,

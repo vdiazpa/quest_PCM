@@ -170,15 +170,22 @@ class NetworkParser:
             self.DA_load_dict: Scaled DA load time series for each bus.
             self.RT_load_dict: Scaled RT load time series for each bus.
         """
-        df_da = self.data_df.get("load_timeseries_DA")
-        df_rt = self.data_df.get("load_timeseries_RT")
-        df_da, df_rt = self.utils.filter_data_timesteps(time_setup, df_da, df_rt)
-
-        if df_da is None or df_rt is None:
-            raise ValueError("Missing DA or RT load timeseries data.")
         if self.bus_dict is None:
             raise ValueError("Bus data must be parsed first")
         
+        simulate_DA_only = self.config.get("simulate_DA_only", False)
+        df_da = self.data_df.get("load_timeseries_DA")
+        if df_da is None:
+            raise ValueError("Missing DA load timeseries data.")
+        
+        if not simulate_DA_only:
+            df_rt = self.data_df.get("load_timeseries_RT")
+            if df_rt is None:
+                raise ValueError("Missing RT load timeseries data.")
+            df_da, df_rt = self.utils.filter_data_timesteps(time_setup, df_da, df_rt)
+        else:
+            df_da, df_rt = self.utils.filter_data_timesteps(time_setup, df_da, None)
+
         buses = self.bus_dict
         agg_level = self.config["load_timeseries_aggregation_level"]
 
@@ -200,8 +207,8 @@ class NetworkParser:
             else:
                 raise ValueError("Invalid load aggregation level. Choose 'node', 'area', or 'zone'.")
 
-            if region not in df_da.columns or region not in df_rt.columns:
-                raise KeyError(f"Region '{region}' not found in DA or RT load timeseries data.")
+            if region not in df_da.columns:
+                raise KeyError(f"Region '{region}' not found in DA timeseries data.")
 
             scale = base_load / total_load
 
@@ -213,11 +220,14 @@ class NetworkParser:
                     "values": [v * scale for v in df_da[region]]
                 }
             }
-            self.RT_load_dict[bus_id] = {
-                "bus": bus_id,
-                "area": bus["area"],
-                "p_load": {
-                    "data_type": "time_series",
-                    "values": [v * scale for v in df_rt[region]]
+            if not simulate_DA_only:
+                if region not in df_rt.columns:
+                    raise KeyError(f"Region '{region}' not found in RT timeseries data.")
+                self.RT_load_dict[bus_id] = {
+                    "bus": bus_id,
+                    "area": bus["area"],
+                    "p_load": {
+                        "data_type": "time_series",
+                        "values": [v * scale for v in df_rt[region]]
+                    }
                 }
-            }
