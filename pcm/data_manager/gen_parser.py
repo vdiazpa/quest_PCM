@@ -4,7 +4,7 @@
 
 import pandas as pd
 import copy as copy
-import src.data_manager.input_utils as input_utils
+import pcm.data_manager.input_utils as input_utils
 
 class GenParser:
     """
@@ -54,7 +54,7 @@ class GenParser:
             raise ValueError("gen.csv file must be present in the data folder.")
         
         for _, row in df_gendata.iterrows():
-            if row["Unit Type"] not in self.config["thermal_generator_types"]:
+            if row["Type"] != "Thermal":
                 continue
 
             gen_id = str(row.get("GEN UID"))
@@ -180,19 +180,26 @@ class GenParser:
         Raises:
             ValueError: If DA or RT renewable time series data is missing.
         """
+        simulate_DA_only = self.config.get("simulate_DA_only", False)
         df_da = self.data_df.get("renewable_timeseries_DA")
-        df_rt = self.data_df.get("renewable_timeseries_RT")
+        
+        if df_da is None:
+            raise ValueError("Missing DA renewable time_series data.")
 
-        if df_da is None or df_rt is None:
-            raise ValueError("Missing DA or RT load time_series data.")
-
-        df_da, df_rt = self.utils.filter_data_timesteps(time_settings, df_da, df_rt)
+        if not simulate_DA_only:
+            df_rt = self.data_df.get("renewable_timeseries_RT", None)
+            if df_rt is None:
+                raise ValueError("Missing RT renewable time_series data.")
+            df_da, df_rt = self.utils.filter_data_timesteps(time_settings, df_da, df_rt)
+        else:
+            df_da, df_rt = self.utils.filter_data_timesteps(time_settings, df_da, None)
+            
         DA_dict = self.renewable_DA_dict
         RT_dict = self.renewable_RT_dict
         gen_data = self.data_df.get("gen")
 
         for _, row in gen_data.iterrows():
-            if row["Unit Type"] not in self.config["renewable_generator_types"]:
+            if row["Type"] != "Renewable" and row["Type"] != "Fixed Renewable":
                 continue
 
             gid = str(row.get("GEN UID"))
@@ -202,9 +209,14 @@ class GenParser:
             category = str(row.get("Category"))
             in_srv = bool(row.get("In Service", True))
             fuel = str(row.get("Fuel"))
-            is_nd = row["Unit Type"] in self.config["fixed_renewable_types"]
+            is_nd = row["Type"] == "Fixed Renewable"
 
-            for ts_dict, df in [(DA_dict, df_da), (RT_dict, df_rt)]:
+            # Always do DA
+            ts_pairs = [(DA_dict, df_da)]
+            # Add RT only if available
+            if df_rt is not None and not simulate_DA_only:
+                ts_pairs.append((RT_dict, df_rt))
+            for ts_dict, df in ts_pairs:
                 ts_dict[gid] = {
                     "bus": bus,
                     "area": area,
