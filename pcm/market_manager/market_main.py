@@ -64,6 +64,7 @@ class MarketSimulator:
             Egret solution or (Pyomo solution, Egret solution) if return_pyomo_result is True.
         """
         if self.PTDF_holder:
+            #pyomo_md holds the uc problem model with quest storage. 
             pyomo_md = self.egret_uc_model_generator(egret_md, PTDF_matrix_dict = self.PTDF_holder, relaxed=model_relaxed)
         else:
             pyomo_md = self.egret_uc_model_generator(egret_md, relaxed=model_relaxed)

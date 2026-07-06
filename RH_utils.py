@@ -1,6 +1,5 @@
 #RH_utils.py
 
-
 from egret.models.unit_commitment import _solve_unit_commitment, create_tight_unit_commitment_model, _save_uc_results
 from egret.model_library.unit_commitment.uc_model_generator import generate_model, UCFormulation
 from egret.model_library.unit_commitment.uc_utils import SlackType
@@ -309,7 +308,7 @@ def add_branch_contingencies(md, max_cont=None):
 
     return md
 
-def run_RH_egret(md_full, F, L, RH_opt_gap=0.01, bench_gap=0.01, tee=False, write_csv=False):
+def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=False, write_csv=False):
 
     #========================================================================================== Initialization
     ptdf_options, PTDF_cache = build_ptdf_dict(md_full)
@@ -317,9 +316,6 @@ def run_RH_egret(md_full, F, L, RH_opt_gap=0.01, bench_gap=0.01, tee=False, writ
     init_states    = None
     windows, fixes = RH_windows_fixes(len(md_full.data['system']['time_keys']), F, L)
     fixed_sol      = {"UnitOn": {}, "UnitStart": {}, "UnitStop": {} ,"IsCharging": {}, "IsDischarging": {}} #,"ChargePower": {}, "DischargePower": {}, "SoC": {} }
-    UCFormulation  = namedtuple('UCFormulation', ['status_vars','power_vars','reserve_vars','generation_limits','ramping_limits','production_costs','uptime_downtime','startup_costs','network_constraints' ] )
-    form_list      =  ['garver_3bin_vars', 'garver_power_vars','garver_power_avail_vars', 'pan_guan_gentile_KOW_generation_limits','damcikurt_ramping', 'KOW_production_costs_tightened', 'rajan_takriti_UT_DT', 'KOW_startup_costs', 'ptdf_power_flow'] # 
-    formulation    = UCFormulation(*form_list)
 
     #for code profiling
     slice_time = 0.0
@@ -328,55 +324,40 @@ def run_RH_egret(md_full, F, L, RH_opt_gap=0.01, bench_gap=0.01, tee=False, writ
     t_dispatch_build = 0.0
     t_dispatch_solve = 0.0
 
-    egret_logger.setLevel(logging.ERROR)
-    main_data_path = "Data/RTS_GMLC"
-    yaml_path = "config/GMLC_config.yaml"
-
-    input_manager = DataManager(main_data_path, yaml_path)
-    input_manager.export_input_json()
-
-    simulator = MarketSimulator(input_manager)
-    simulator.create_DA_RT_models()
-
-    md_full = simulator.DA_model
-
-    md_full["current_market"] = "DA"
-
     #============================================================================================ Main RH loop
     for i, (window, fix_periods) in enumerate(zip(windows, fixes)):
+
         t_fix0, t_fix1 = fix_periods
-
-        t_slice = time.perf_counter()
-        md_window = slice_md(md_full, window)
-        slice_time += time.perf_counter() - t_slice
-
         print(f"\nWindow {i+1}/{len(windows)}: {window} | fix {fix_periods}")
 
-        #============================================== Apply initial state if i>0
+        #__________________________/Slice egret model data object for current window & time]
+        t_slice     = time.perf_counter()
+        md_window   = slice_md(md_full, window)
+        slice_time += time.perf_counter() - t_slice
+
+        #___________________________/Apply initial state if i>0.
         if init_states is not None:
             md_window = apply_init_state_to_md(md_window, init_states)
         
-        #=============================================== Generate model for current window
-        t_build = time.perf_counter()
-        model = simulator.egret_uc_model_generator(md_window)
-        # model   = generate_model(md_window, uc_formulation=formulation, relax_binaries=False, slack_type=SlackType.BUS_BALANCE, PTDF_matrix_dict=PTDF_cache, ptdf_options=ptdf_options) 
+        #___________________________/Generate model for current window.
+        t_build     = time.perf_counter()
+        model       = simulator.egret_uc_model_generator(md_window)
         build_time += time.perf_counter() - t_build
 
         # # Sanity check for injections; save comparison of computed initial status vs. model init status
         # if i==1: 
         #     write_state_comparison_csv(init_states, md_window, model, filename="initial_state_comparison.csv")
-
         #model.write(f"RH_window_{i+1}_model.lp", io_options={"symbolic_solver_labels": True})
 
-        #============================================== Solve
-        t_rh_solve = time.perf_counter()
+        #___________________________/Solve
+        t_rh_solve     = time.perf_counter()
         _solve_unit_commitment(model, solver='gurobi', mipgap=RH_opt_gap, timelimit=None, solver_tee=False, symbolic_solver_labels=False, solver_options = None, solve_method_options=None, relaxed=False)
         rh_solve_time += time.perf_counter() - t_rh_solve
 
         t_roll_local = window.index(t_fix1) + 1  # local index of t_fix1 in the window (1..len(window))
         init_states, fixed_vars = extract_init_state_and_fixed_from_model(model, t_roll_local, md_window, fix_vars=True)
 
-        #=============================================== Stitch solution
+        #___________________________/Stitch solution 
         for k, vardict in fixed_vars.items():
             if k not in fixed_sol:
                 continue
@@ -388,30 +369,31 @@ def run_RH_egret(md_full, F, L, RH_opt_gap=0.01, bench_gap=0.01, tee=False, writ
     if write_csv:
         save_solution_to_csv(fixed_sol)
     
-    #=================================================================Evaluate stitched solution 
-    print(f"\n{bar}", "\nSolving fixed-commitment dispatch...", f"\n{bar}")
+#___________________________/Evaluate stitched solution 
 
-    t_dispatch_build = time.perf_counter()
-    md_dispatch = deepcopy(md_full)
-    md_dispatch.data["elements"].pop("contingency", None)  # remove contingencies for dispatch solve
+    # print(f"\n{bar}", "\nSolving fixed-commitment dispatch...", f"\n{bar}")
 
-    model = generate_model(md_dispatch, uc_formulation=formulation, 
-        relax_binaries=True, slack_type=SlackType.BUS_BALANCE,PTDF_matrix_dict=PTDF_cache, ptdf_options=ptdf_options)
-    t_dispatch_build = time.perf_counter() - t_dispatch_build
+    # t_dispatch_build = time.perf_counter()
+    # md_dispatch = deepcopy(md_full)
+    # md_dispatch.data["elements"].pop("contingency", None)  # remove contingencies for dispatch solve
 
-    model.dual=Suffix(direction=Suffix.IMPORT)
+    # model = generate_model(md_dispatch, uc_formulation=formulation, 
+    #     relax_binaries=True, slack_type=SlackType.BUS_BALANCE,PTDF_matrix_dict=PTDF_cache, ptdf_options=ptdf_options)
+    # t_dispatch_build = time.perf_counter() - t_dispatch_build
 
-    model = load_fixed_sol(model, fixed_sol)
+    # model.dual=Suffix(direction=Suffix.IMPORT)
 
-    t_dispatch_solve = time.perf_counter()
-    _solve_unit_commitment(
-        model, solver='gurobi', 
-        mipgap=bench_gap, timelimit=None, solver_tee=tee, symbolic_solver_labels=False, 
-        solver_options=None, solve_method_options=None, relaxed=True)
-    t_dispatch_solve = time.perf_counter() - t_dispatch_solve
+    # model = load_fixed_sol(model, fixed_sol)
+
+    # t_dispatch_solve = time.perf_counter()
+    # _solve_unit_commitment(
+    #     model, solver='gurobi', 
+    #     mipgap=bench_gap, timelimit=None, solver_tee=tee, symbolic_solver_labels=False, 
+    #     solver_options=None, solve_method_options=None, relaxed=True)
+    # t_dispatch_solve = time.perf_counter() - t_dispatch_solve
     
-    print("RH Objective:", round(value(list(model.component_data_objects(Objective, active=True))[0]),2))
-    print(f"{bar}", "\nRH solution complete", f"\n{bar}")
+    # print("RH Objective:", round(value(list(model.component_data_objects(Objective, active=True))[0]),2))
+    # print(f"{bar}", "\nRH solution complete", f"\n{bar}")
 
     return model, None, fixed_sol, {"slice_time": slice_time, "build_time": build_time, "rh_solve_time": rh_solve_time, "t_dispatch_build": t_dispatch_build, "t_dispatch_solve": t_dispatch_solve}
 
