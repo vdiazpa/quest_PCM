@@ -330,34 +330,40 @@ def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=
         t_fix0, t_fix1 = fix_periods
         print(f"\nWindow {i+1}/{len(windows)}: {window} | fix {fix_periods}")
 
-        #__________________________/Slice egret model data object for current window & time]
+        #_____________________________________________/Slice egret model data object for current window & time.
         t_slice     = time.perf_counter()
         md_window   = slice_md(md_full, window)
         slice_time += time.perf_counter() - t_slice
 
-        #___________________________/Apply initial state if i>0.
+        #_____________________________________________/Apply initial state if i>0.
         if init_states is not None:
             md_window = apply_init_state_to_md(md_window, init_states)
         
-        #___________________________/Generate model for current window.
+        #_____________________________________________/Generate model for current window.
         t_build     = time.perf_counter()
         model       = simulator.egret_uc_model_generator(md_window)
         build_time += time.perf_counter() - t_build
 
+        #TEST
+        # print("power_balance:", getattr(model, "power_balance", None))
+        # print("lazy:", getattr(model, "_ptdf_options", {}).get("lazy", None))
+        # for attr in ["PHS_present", "BESS_present", "GESS_present", "Storage", "SocStorage"]:
+        #     print(attr, hasattr(model, attr))
+        
         # # Sanity check for injections; save comparison of computed initial status vs. model init status
         # if i==1: 
         #     write_state_comparison_csv(init_states, md_window, model, filename="initial_state_comparison.csv")
         #model.write(f"RH_window_{i+1}_model.lp", io_options={"symbolic_solver_labels": True})
 
-        #___________________________/Solve
+        #_____________________________________________/Solve
         t_rh_solve     = time.perf_counter()
-        _solve_unit_commitment(model, solver='gurobi', mipgap=RH_opt_gap, timelimit=None, solver_tee=False, symbolic_solver_labels=False, solver_options = None, solve_method_options=None, relaxed=False)
+        simulator.egret_uc_solver(model, solver='gurobi', mipgap=RH_opt_gap, timelimit=None, solver_tee=False, symbolic_solver_labels=False, solver_options = None, solve_method_options=None, relaxed=False)
         rh_solve_time += time.perf_counter() - t_rh_solve
 
         t_roll_local = window.index(t_fix1) + 1  # local index of t_fix1 in the window (1..len(window))
         init_states, fixed_vars = extract_init_state_and_fixed_from_model(model, t_roll_local, md_window, fix_vars=True)
 
-        #___________________________/Stitch solution 
+        #_____________________________________________/Stitch solution 
         for k, vardict in fixed_vars.items():
             if k not in fixed_sol:
                 continue
@@ -369,7 +375,7 @@ def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=
     if write_csv:
         save_solution_to_csv(fixed_sol)
     
-#___________________________/Evaluate stitched solution 
+#_____________________________________________/Evaluate stitched solution 
 
     # print(f"\n{bar}", "\nSolving fixed-commitment dispatch...", f"\n{bar}")
 
