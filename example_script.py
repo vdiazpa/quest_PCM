@@ -9,7 +9,40 @@ import time
 egret_logger.setLevel(logging.ERROR)
 
 
-#_____________________________________________/Create a simulator object]
+def add_branch_contingencies(md, max_cont=None):
+    branches = md.data["elements"]["branch"]
+
+    G = nx.Graph()
+
+    for br, data in branches.items():
+        if data.get("in_service", True):
+            G.add_edge(data["from_bus"], data["to_bus"], name=br )
+
+    bridge_branches = set()
+    for u, v in nx.bridges(G):
+        bridge_branches.add(G[u][v]["name"])
+
+    print("Removing islanding contingency branches:")
+    print(sorted(bridge_branches))
+
+    conts = {}
+    for k, br in enumerate(branches):
+        if max_cont is not None and len(conts) >= max_cont:
+            break
+
+        if not branches[br].get("in_service", True):
+            continue
+
+        if br in bridge_branches:
+            continue
+
+        conts[f"cont_{br}"] = { "branch_contingency": br }
+    md.data["elements"]["contingency"] = conts
+    print(f"Added {len(conts)} non-islanding branch contingencies")
+
+    return md
+
+#_____________________________________________/Create a simulator object.
 main_data_path = "Data/RTS_GMLC"
 yaml_path = "config/GMLC_config.yaml"
 input_manager = DataManager(main_data_path, yaml_path)
@@ -17,30 +50,28 @@ input_manager.export_input_json()
 simulator = MarketSimulator(input_manager)
 simulator.create_DA_RT_models()
 
-#_____________________________________________/Extract DA model data (egret) from simulator]
-
-
+#_____________________________________________/Extract DA model data (egret) from simulator.
 from RH_utils import run_RH_egret
 
 md_full = simulator.DA_model.clone()
 md_full.data["current_market"] = "DA"
 
 t_rh_start = time.perf_counter()
-rh_mod, _, fixed_sol, times = run_RH_egret(md_full, F=8, L=8, simulator=simulator, RH_opt_gap=0.001)
+rh_mod, _, fixed_sol, times = run_RH_egret(md_full, F=6, L=6, simulator=simulator, RH_opt_gap=0.01)
 t_rh_end  = time.perf_counter()
 
-#_____________________________________________/Create pyomo model with DA model data. Time. Write LP]
+#_____________________________________________/Create pyomo model with DA model data. Time. Write LP.
 t0 = time.perf_counter()
 da_mod = simulator.egret_uc_model_generator(md_full)   # pyomo model with quest storage constraints
 da_mod.write("questPCM_DA_model.lp", io_options={"symbolic_solver_labels": True})
 t1 = time.perf_counter()     #build time
 
-#_____________________________________________/Solve pyomo model]
+#_____________________________________________/Solve pyomo model.
 
 pyomo_sol, _, _ = simulator.egret_uc_solver(
     da_mod, 
     solver="gurobi",
-    mipgap=input_manager.config.get("mipgap", 0.001), 
+    mipgap=input_manager.config.get("mipgap", 0.01), 
     timelimit=None, 
     solver_tee=False, 
     symbolic_solver_labels=False, 

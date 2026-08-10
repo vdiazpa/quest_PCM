@@ -97,6 +97,16 @@ def apply_init_state_to_md(md, init_states):
         if generators[gen].get("generator_type") == "thermal":
             generators[gen]["initial_status"] = init_states['StatusAtT0'].get(gen, 0)
             generators[gen]["initial_p_output"] = init_states['PowerGeneratedT0'].get(gen, 0)
+
+    # apply the SoC
+    storage = md.data["elements"].get("storage", {})
+    soc_state = init_states.get("StorageSocOnT0", {})
+
+    if storage:
+        print(f"[RH state] Storage exists in md_window")
+        for s, soc in soc_state.items():
+            storage[s]["initial_state_of_charge"] = soc
+            print(f"[RH state] Set {s} initial_state_of_charge = {soc:.4f}")
     return md
 
 def extract_init_state_and_fixed_from_model(model, t_roll_local, md_wind, fix_vars=True):
@@ -152,8 +162,40 @@ def extract_init_state_and_fixed_from_model(model, t_roll_local, md_wind, fix_va
     InitialState = { "PowerGeneratedT0": {g: value(model.PowerGenerated[g, tkey(tr)]) for g in model.ThermalGenerators}, "StatusAtT0": status_dict}
 
     # If storage exists in the model, include it 
-    if hasattr(model, "StorageUnits") and hasattr(model, "SoC"):
-        InitialState["SoCT0"] = {b: value(model.SoC[b, tkey(tr)]) for b in model.StorageUnits}
+    # if hasattr(model, "StorageUnits") and hasattr(model, "SoC"):
+    #     InitialState["SoCT0"] = {b: value(model.SoC[b, tkey(tr)]) for b in model.StorageUnits}
+    # If storage exists in the model, include SoC carryover
+
+    if hasattr(model, "Storage") and hasattr(model, "SocStorage"):
+        storage_units = list(model.Storage)
+        t_soc = tkey(tr)
+
+        print(f"[RH state] QuESt/Egret storage detected: {len(storage_units)} units.")
+        print(f"[RH state] Extracting SocStorage at boundary t = {t_soc}")
+
+        InitialState["StorageSocOnT0"] = { s: value(model.SocStorage[s, t_soc]) for s in storage_units }
+
+        for s, soc in list(InitialState["StorageSocOnT0"].items())[:5]:
+            print(f"[RH state] Carryover SoC {s}: {soc:.4f}")
+
+    elif hasattr(model, "StorageUnits") and hasattr(model, "SoC"):
+        storage_units = list(model.StorageUnits)
+        t_soc = tkey(tr)
+
+        print(f"[RH state] Generic Egret storage detected: {len(storage_units)} units.")
+        print(f"[RH state] Extracting SoC at boundary t = {t_soc}")
+
+        InitialState["StorageSocOnT0"] = { s: value(model.SoC[s, t_soc])  for s in storage_units}
+
+        for s, soc in list(InitialState["StorageSocOnT0"].items())[:5]:
+            print(f"[RH state] Carryover SoC {s}: {soc:.4f}")
+
+    else:
+        print("[RH state] No storage variables found on solved model.")
+        print("[RH state] Has Storage?", hasattr(model, "Storage"))
+        print("[RH state] Has SocStorage?", hasattr(model, "SocStorage"))
+        print("[RH state] Has StorageUnits?", hasattr(model, "StorageUnits"))
+        print("[RH state] Has SoC?", hasattr(model, "SoC"))
 
     #  Fixed solution slice up to roll/fix time 
     fixed_vars = None
@@ -325,6 +367,7 @@ def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=
     t_dispatch_solve = 0.0
 
     #============================================================================================ Main RH loop
+
     for i, (window, fix_periods) in enumerate(zip(windows, fixes)):
 
         t_fix0, t_fix1 = fix_periods
