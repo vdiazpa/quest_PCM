@@ -5,7 +5,7 @@
 import pandas as pd
 import os
 
-folder_with_data = "duke_revised" #path to folder with raw duke data files.
+folder_with_data = "Data/duke_revised" #path to folder with raw duke data files.
 
 #----------------------Create branch csv for QuESt PCM
 
@@ -20,8 +20,8 @@ for i, row in line_data.iterrows():
     to_bus      = "n" + row["line"].split("_n")[1]
     X           = row["reactance"]/(row["voltage_class"]**2) # ohms -> pu.
     cont_rating = row["limit"]
-    Tr_ratio    = 0
-    rows.append({ "Line ID": line_id, "From Bus": from_bus, "To Bus": to_bus, "X": X, "Cont Rating": cont_rating,  "LTE Rating": cont_rating, "STE Rating": cont_rating, "Tr ratio": Tr_ratio })
+    Tr_ratio    = 0.0
+    rows.append({ "Line ID": line_id, "From Bus": from_bus, "To Bus": to_bus, "X": X, "Cont Rating": cont_rating,  "LTE Rating": cont_rating, "STE Rating": cont_rating, "Tr Ratio": Tr_ratio })
 
 line_df = pd.DataFrame(rows)
 line_df.to_csv(os.path.join(folder_with_data, "branch.csv"), index=False)
@@ -69,12 +69,12 @@ gen_data["node"] = gen_data["node"].apply(lambda x: "n_" + str(x))
 
 
 def _get_unit_type(typ):
-    if typ in ["coal", "ngct", "ngcc", "oil", "nuclear"]:
+    if typ in ["coal", "ngct", "ngcc", "oil", "nuc"]:
         return "Thermal"
     elif typ in ["solar", "wind", "hydro"]:
         return "Renewable"
     else:                    
-        "Unknown type row"
+        print("Unknown generator type row during parse")
 
 gen_data["Type"] = gen_data["typ"].apply(_get_unit_type)
 
@@ -161,8 +161,9 @@ bat_df.to_csv(os.path.join(folder_with_data, "battery_storage.csv"), index=False
 solar_data = pd.read_csv(os.path.join(folder_with_data, "data_solar_2023.csv"), index_col=0)
 hydro_data = pd.read_csv(os.path.join(folder_with_data, "data_hydro_H.csv"))
 wind_data  = pd.read_csv(os.path.join(folder_with_data, "data_wind_2023.csv"), index_col=0)
+offshore_wind_data=pd.read_csv(os.path.join(folder_with_data, "data_offshore_wind_2023.csv"), index_col=0)
 
-renewable_data = pd.concat([solar_data, hydro_data, wind_data], axis=1)
+renewable_data = pd.concat([solar_data, hydro_data, wind_data, offshore_wind_data], axis=1)
 
 dates = pd.date_range(start="2023-01-01 00:00:00", periods=len(renewable_data), freq="h")
 

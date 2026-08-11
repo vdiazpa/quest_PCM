@@ -44,7 +44,8 @@ def add_branch_contingencies(md, max_cont=None):
     return md
 
 #_____________________________________________/Create a simulator object.
-main_data_path = "Data/RTS_GMLC"
+main_data_path = "Data/duke_revised"
+# main_data_path = "Data/RTS_GMLC"
 yaml_path = "config/GMLC_config.yaml"
 input_manager = DataManager(main_data_path, yaml_path)
 input_manager.export_input_json()
@@ -58,7 +59,7 @@ md_full = simulator.DA_model.clone()
 md_full.data["current_market"] = "DA"
 
 t_rh_start = time.perf_counter()
-rh_mod, _, fixed_sol, times = run_RH_egret(md_full, F=6, L=6, simulator=simulator, RH_opt_gap=0.01)
+rh_mod, _, fixed_sol, times = run_RH_egret(md_full, F=8, L=6, simulator=simulator, RH_opt_gap=0.01)
 t_rh_end  = time.perf_counter()
 
 #_____________________________________________/Create pyomo model with DA model data. Time. Write LP.
