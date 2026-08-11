@@ -3,6 +3,7 @@ from pyomo.environ import Objective, value
 from egret.common.log import logger as egret_logger
 from pcm.data_manager.data_main import DataManager
 from pcm.market_manager.market_main import MarketSimulator
+import networkx as nx
 # from RH_utils import *
 import logging
 import time
@@ -62,8 +63,8 @@ t_rh_end  = time.perf_counter()
 
 #_____________________________________________/Create pyomo model with DA model data. Time. Write LP.
 t0 = time.perf_counter()
-da_mod = simulator.egret_uc_model_generator(md_full)   # pyomo model with quest storage constraints
-da_mod.write("questPCM_DA_model.lp", io_options={"symbolic_solver_labels": True})
+da_mod = simulator.egret_uc_model_generator(md_full, ptdf_options={"lazy": False})   # pyomo model with quest storage constraints
+# da_mod.write("questPCM_DA_model.lp", io_options={"symbolic_solver_labels": True})
 t1 = time.perf_counter()     #build time
 
 #_____________________________________________/Solve pyomo model.
@@ -82,7 +83,7 @@ pyomo_sol, _, _ = simulator.egret_uc_solver(
 t2 = time.perf_counter() 
 
 mono_obj = value(next(da_mod.component_data_objects(Objective, active=True)))
-da_mod.write("questPCM_DA_model_after_solve.lp", io_options={"symbolic_solver_labels": True}) #c heck in LP if transmission constraints were added. 
+# da_mod.write("questPCM_DA_model_after_solve.lp", io_options={"symbolic_solver_labels": True}) #c heck in LP if transmission constraints were added. 
 
 #=============== Print mono results
 

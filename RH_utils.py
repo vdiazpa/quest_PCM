@@ -384,7 +384,7 @@ def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=
         
         #_____________________________________________/Generate model for current window.
         t_build     = time.perf_counter()
-        model       = simulator.egret_uc_model_generator(md_window)
+        model       = simulator.egret_uc_model_generator(md_window, ptdf_options={"lazy": False})
         build_time += time.perf_counter() - t_build
 
         #TEST

@@ -94,8 +94,8 @@ mut = gen_data["minup"]
 mdt = gen_data["mindn"]
 
 gen_data["Initial Time Hr"] = -gen_data["mindn"].clip(lower=1)
-
 gen_data["Fuel Price $/MMBTU"] = 1.0
+gen_data["Initial Power MW"]   = 0.0
 
 pct0 = p_min/p_max
 pct1 = pct0 + (1-pct0)/3
@@ -113,10 +113,27 @@ gen_data["HR_incr_2"] = 1000 *  gen_data["var_om"]
 gen_data["HR_incr_3"] = 1000 *  gen_data["var_om"] 
 
 
-gen_df = pd.DataFrame({ "GEN UID": gen_uid, "Bus ID": gen_data["node"], "Gen ID": gen_data["Gen ID"], "Type": gen_data["Type"], "PMax MW": p_max, "P_Min MW": p_min, 
-        "Ramp Rate MW/Min": round(ramp_rate,4), "Min Up Time Hr": mut, "Min Down Time Hr": mdt, 
-        "HR_avg_0": gen_data["HR_avg_0"], "HR_incr_1": gen_data["HR_incr_1"], "HR_avg_2": gen_data["HR_incr_2"], "HR_incr_3": gen_data["HR_incr_3"], 
-        "Output_pct_0": gen_data["Output_pct_0"], "Output_pct_1": gen_data["Output_pct_1"], "Output_pct_2": gen_data["Output_pct_2"], "Output_pct_3": gen_data["Output_pct_3"],
+gen_df = pd.DataFrame({ 
+    "GEN UID": gen_uid, 
+    "Bus ID":  gen_data["node"], 
+    "Gen ID":  gen_data["Gen ID"], 
+    "Type":    gen_data["Type"], 
+    "PMax MW": p_max, 
+    "PMin MW": p_min, 
+    "Ramp Rate MW/Min": round(ramp_rate,4), 
+    "Min Up Time Hr": mut, 
+    "Min Down Time Hr": mdt, 
+    "HR_avg_0": gen_data["HR_avg_0"], 
+    "HR_incr_1": gen_data["HR_incr_1"], 
+    "HR_incr_2": gen_data["HR_incr_2"], 
+    "HR_incr_3": gen_data["HR_incr_3"], 
+    "Output_pct_0": gen_data["Output_pct_0"], 
+    "Output_pct_1": gen_data["Output_pct_1"], 
+    "Output_pct_2": gen_data["Output_pct_2"], 
+    "Output_pct_3": gen_data["Output_pct_3"],
+    "Initial Time Hr": gen_data["Initial Time Hr"], 
+    "Fuel Price $/MMBTU": gen_data["Fuel Price $/MMBTU"],
+    "Initial Power MW": gen_data["Initial Power MW"] , 
         })
 
 gen_df.to_csv(os.path.join(folder_with_data, "gen.csv"), index=False)
