@@ -44,8 +44,10 @@ def add_branch_contingencies(md, max_cont=None):
     return md
 
 #_____________________________________________/Create a simulator object.
-main_data_path = "Data/duke_revised"
-# main_data_path = "Data/RTS_GMLC"
+
+# main_data_path = "Data/duke_revised"
+main_data_path = "Data/RTS_GMLC"
+
 yaml_path = "config/GMLC_config.yaml"
 input_manager = DataManager(main_data_path, yaml_path)
 input_manager.export_input_json()
@@ -53,18 +55,24 @@ simulator = MarketSimulator(input_manager)
 simulator.create_DA_RT_models()
 
 #_____________________________________________/Extract DA model data (egret) from simulator.
+
 from RH_utils import run_RH_egret
 
 md_full = simulator.DA_model.clone()
 md_full.data["current_market"] = "DA"
 
+for g, gd in md_full.data["elements"]["generator"].items():
+    if gd.get("generator_type") in ["thermal", "Thermal"]:
+        if gd.get("startup_fuel") == []:
+            gd.pop("startup_fuel")
+
 t_rh_start = time.perf_counter()
-rh_mod, _, fixed_sol, times = run_RH_egret(md_full, F=8, L=6, simulator=simulator, RH_opt_gap=0.01)
+rh_mod, _, fixed_sol, times = run_RH_egret(md_full, F=14, L=8, simulator=simulator, RH_opt_gap=0.01, lazy_ptdf=False, cache_ptdf=True)
 t_rh_end  = time.perf_counter()
 
-#_____________________________________________/Create pyomo model with DA model data. Time. Write LP.
+#_____________________________________________/Create (monolithic) model with DA model data. Time. Write LP.
 t0 = time.perf_counter()
-da_mod = simulator.egret_uc_model_generator(md_full, ptdf_options={"lazy": False})   # pyomo model with quest storage constraints
+da_mod = simulator.egret_uc_model_generator(md_full, ptdf_options={"lazy": False})   # pyomo model with quest storage constraints0
 # da_mod.write("questPCM_DA_model.lp", io_options={"symbolic_solver_labels": True})
 t1 = time.perf_counter()     #build time
 

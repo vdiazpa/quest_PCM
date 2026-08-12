@@ -1,18 +1,14 @@
 #RH_utils.py
 
 from egret.models.unit_commitment import _solve_unit_commitment, create_tight_unit_commitment_model, _save_uc_results
-from egret.model_library.unit_commitment.uc_model_generator import generate_model, UCFormulation
+from egret.model_library.unit_commitment.uc_model_generator import generate_model
 from egret.model_library.unit_commitment.uc_utils import SlackType
 from egret.model_library.defn import BasePointType
-from egret.common.log import logger as egret_logger
-from pcm.data_manager.data_main import DataManager
-from pcm.market_manager.market_main import MarketSimulator
 import egret.common.lazy_ptdf_utils as lpu
 import egret.data.ptdf_utils as ptdf_utils
 from collections import namedtuple
 from copy import deepcopy
 import networkx as nx
-import logging
 from pyomo.environ import *
 import time 
 
@@ -350,10 +346,12 @@ def add_branch_contingencies(md, max_cont=None):
 
     return md
 
-def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=False, write_csv=False):
+def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=False, write_csv=False, cache_ptdf=False, lazy_ptdf=False):
 
     #========================================================================================== Initialization
-    ptdf_options, PTDF_cache = build_ptdf_dict(md_full)
+    # ptdf_options, PTDF_cache = build_ptdf_dict(md_full)
+
+    ptdf_cache = {} if cache_ptdf else None
 
     init_states    = None
     windows, fixes = RH_windows_fixes(len(md_full.data['system']['time_keys']), F, L)
@@ -366,9 +364,8 @@ def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=
     t_dispatch_build = 0.0
     t_dispatch_solve = 0.0
 
-    #============================================================================================ Main RH loop
 
-    for i, (window, fix_periods) in enumerate(zip(windows, fixes)):
+    for i, (window, fix_periods) in enumerate(zip(windows, fixes)):  #================== Main RH loop
 
         t_fix0, t_fix1 = fix_periods
         print(f"\nWindow {i+1}/{len(windows)}: {window} | fix {fix_periods}")
@@ -383,8 +380,15 @@ def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=
             md_window = apply_init_state_to_md(md_window, init_states)
         
         #_____________________________________________/Generate model for current window.
+
+        
         t_build     = time.perf_counter()
-        model       = simulator.egret_uc_model_generator(md_window, ptdf_options={"lazy": False})
+        if cache_ptdf:
+            print(f"Before window {i+1}: PTDF cache keys={list(ptdf_cache.keys())}")
+            model = simulator.egret_uc_model_generator(md_window, ptdf_options={"lazy": lazy_ptdf}, PTDF_matrix_dict=ptdf_cache)
+            print(f"After window {i+1}: PTDF cache keys={list(ptdf_cache.keys())}")
+        else: 
+            model = simulator.egret_uc_model_generator(md_window, ptdf_options={"lazy": lazy_ptdf})
         build_time += time.perf_counter() - t_build
 
         #TEST
@@ -446,51 +450,4 @@ def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=
 
     return model, None, fixed_sol, {"slice_time": slice_time, "build_time": build_time, "rh_solve_time": rh_solve_time, "t_dispatch_build": t_dispatch_build, "t_dispatch_solve": t_dispatch_solve}
 
-def run_monolithic_egret(md_full, mipgap=0.01, tee=False):
-
-    t0 = time.perf_counter()
-    ptdf_options, PTDF_cache = build_ptdf_dict(md_full)
-
-    UCFormulationNT = namedtuple(
-        'UCFormulation',
-        [ 'status_vars', 'power_vars', 'reserve_vars',
-            'generation_limits', 'ramping_limits', 'production_costs',
-            'uptime_downtime', 'startup_costs', 'network_constraints' ])
-
-    formulation = UCFormulationNT(
-        'garver_3bin_vars', 'garver_power_vars', 'garver_power_avail_vars',  'pan_guan_gentile_KOW_generation_limits', 'damcikurt_ramping',
-        'KOW_production_costs_tightened', 'rajan_takriti_UT_DT', 'KOW_startup_costs', 'ptdf_power_flow' )
-
-
-    model = generate_model(
-        md_full,
-        uc_formulation=formulation,
-        relax_binaries=False,
-        slack_type=SlackType.BUS_BALANCE,
-        PTDF_matrix_dict=PTDF_cache,
-        ptdf_options=ptdf_options)
-
-    build_done = time.perf_counter()
-
-    _solve_unit_commitment(
-        model,
-        solver='gurobi',
-        mipgap=mipgap,
-        timelimit=None,
-        solver_tee=tee,
-        symbolic_solver_labels=False,
-        solver_options=None,
-        solve_method_options=None,
-        relaxed=False,
-    )
-
-    solve_done = time.perf_counter()
-
-    results = _save_uc_results(model, relaxed=False).data
-    obj = results["system"]["total_cost"]
-
-    return model, {
-        "method": "MONO","F": "", "L": "", 
-        "build_time": build_done - t0, "solve_time": solve_done - build_done, "total_time": solve_done - t0,
-        "objective": obj}
 
