@@ -1,12 +1,5 @@
 #RH_utils.py
 
-from egret.models.unit_commitment import _solve_unit_commitment, create_tight_unit_commitment_model, _save_uc_results
-from egret.model_library.unit_commitment.uc_model_generator import generate_model
-from egret.model_library.unit_commitment.uc_utils import SlackType
-from egret.model_library.defn import BasePointType
-import egret.common.lazy_ptdf_utils as lpu
-import egret.data.ptdf_utils as ptdf_utils
-from collections import namedtuple
 from copy import deepcopy
 import networkx as nx
 from pyomo.environ import *
@@ -245,25 +238,6 @@ def save_solution_to_csv(fixed_sol):
                 row.append(fixed_sol['UnitStop'].get((g,t), ""))
             writer.writerow(row)
 
-def build_ptdf_dict(md):
-
-    ptdf_options = lpu.populate_default_ptdf_options(None)
-    baseMVA = md.data.get("system", {}).get("baseMVA", 100.0)
-    lpu.check_and_scale_ptdf_options(ptdf_options, baseMVA)
-
-    elems = md.data["elements"]
-
-    PTDF  = ptdf_utils.VirtualPTDFMatrix(
-        branches=elems["branch"],
-        buses= elems["bus"],
-        reference_bus=md.data.get("system", {}).get( "reference_bus",next(iter(elems["bus"]))),
-        base_point=BasePointType.FLATSTART,
-        ptdf_options=ptdf_options,
-        interfaces=elems.get("interface", None), 
-        contingencies=elems.get("contingency", None))
-
-    return ptdf_options,  {"": PTDF}
-
 def load_fixed_sol(model, fixed_sol=None): 
 
     t_sample = next(iter(model.TimePeriods))
@@ -288,24 +262,15 @@ def write_state_comparison_csv(init_states, md_window, model, filename="state_ch
 
     with open(filename, mode="w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "Generator",
-            "Computed_StatusAtT0",
-            "MD_initial_status",
-            "Model_UnitOnT0",
-            "Model_UnitOnT0State"
-        ])
+        writer.writerow([ "Generator", "Computed_StatusAtT0", "MD_initial_status", "Model_UnitOnT0", "Model_UnitOnT0State"])
 
         for g in model.ThermalGenerators:
             computed = init_states["StatusAtT0"].get(g, None)
             md_stat  = md_window.data["elements"]["generator"][g].get("initial_status", None)
-
             unit_on_t0 = None
             unit_on_t0_state = None
-
             if hasattr(model, "UnitOnT0"):
                 unit_on_t0 = int(round(value(model.UnitOnT0[g])))
-
             if hasattr(model, "UnitOnT0State"):
                 unit_on_t0_state = value(model.UnitOnT0State[g])
 
@@ -346,7 +311,52 @@ def add_branch_contingencies(md, max_cont=None):
 
     return md
 
-def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=False, write_csv=False, cache_ptdf=False, lazy_ptdf=False):
+def relax_lookahead_binaries(model, n_fixed_local):
+    relaxed = {}
+
+    for var in model.component_objects(Var, active=True):
+
+        count = 0
+
+        for idx in var:
+
+            v = var[idx]
+
+            if not v.is_binary():
+                continue
+
+            # Normalize scalar vs tuple index
+            idx_tuple = idx if isinstance(idx, tuple) else (idx,)
+
+            # Find a time index in this variable index
+            t_local = None
+            for item in reversed(idx_tuple):
+                try:
+                    ti = int(item)
+                    if ti in [int(t) for t in model.TimePeriods]:
+                        t_local = ti
+                        break
+                except (TypeError, ValueError):
+                    pass
+
+            # Binary not indexed by time -> leave it alone
+            if t_local is None:
+                continue
+
+            # Only relax lookahead
+            if t_local > n_fixed_local:
+                v.domain = UnitInterval
+                count += 1
+
+        if count:
+            relaxed[var.name] = count
+
+    print("Relaxed lookahead binary components:")
+    for name, n in relaxed.items():
+        print(f"  {name}: {n}")
+
+
+def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=False, write_csv=False, cache_ptdf=False, lazy_ptdf=False, relax_lookahead=False):
 
     #========================================================================================== Initialization
     # ptdf_options, PTDF_cache = build_ptdf_dict(md_full)
@@ -381,14 +391,22 @@ def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=
         
         #_____________________________________________/Generate model for current window.
 
-        
         t_build     = time.perf_counter()
         if cache_ptdf:
-            print(f"Before window {i+1}: PTDF cache keys={list(ptdf_cache.keys())}")
             model = simulator.egret_uc_model_generator(md_window, ptdf_options={"lazy": lazy_ptdf}, PTDF_matrix_dict=ptdf_cache)
-            print(f"After window {i+1}: PTDF cache keys={list(ptdf_cache.keys())}")
+            # for key, ptdf in ptdf_cache.items():
+                # print(f"Window {i+1}: key={key}, PTDF object id={id(ptdf)}") # Check ptdf is reused
         else: 
             model = simulator.egret_uc_model_generator(md_window, ptdf_options={"lazy": lazy_ptdf})
+
+        if relax_lookahead:
+            n_fixed_local = t_fix1 - t_fix0 + 1
+
+            if n_fixed_local < len(window):
+                relax_lookahead_binaries(model, n_fixed_local)
+            else: 
+                print("no lookahead in this window, no binaries relaxed")
+
         build_time += time.perf_counter() - t_build
 
         #TEST
