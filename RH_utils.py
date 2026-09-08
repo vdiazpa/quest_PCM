@@ -420,18 +420,13 @@ def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=
 
     print(f"\n{bar}", "\nSolving fixed-commitment dispatch...", f"\n{bar}")
 
-    t_dispatch_build = time.perf_counter()
+    t0_dispatch_build = time.perf_counter()
     md_dispatch = deepcopy(md_full)
     md_dispatch.data["elements"].pop("contingency", None)  # remove contingencies for dispatch solve
-
-    model = simulator.egret_uc_model_generator(md_dispatch, ptdf_options={"lazy": False}, PTDF_matrix_dict=ptdf_cache)
+    model = simulator.egret_uc_model_generator(md_dispatch, ptdf_options={"lazy": True}, PTDF_matrix_dict=ptdf_cache)
     model = load_fixed_sol(model, fixed_sol)
+    t_dispatch_build = time.perf_counter() - t0_dispatch_build
 
-    # model.dual=Suffix(direction=Suffix.IMPORT)
-
-    # model = load_fixed_sol(model, fixed_sol)
-
-    t_dispatch_solve = time.perf_counter()
     simulator.egret_uc_solver(model, solver='gurobi', mipgap=RH_opt_gap, timelimit=None, solver_tee=False, symbolic_solver_labels=False, solver_options = None, solve_method_options=None, relaxed=False)
 
     t_dispatch_solve = time.perf_counter() - t_dispatch_solve
