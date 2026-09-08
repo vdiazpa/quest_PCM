@@ -1,9 +1,0 @@
-Reserve Type,System Fixed Requirement MW,System Percentage Requirement,Area Fixed Requirement MW,Area Percentage Requirement,Eligible Areas,Remarks
-System Reserve,0,5,,,,Supply reserve
-Regulation Up,10,5,5,0,"(1,2)",5 minute product
-Regulation Down,10,5,5,0,"(1,2)",5 minute product
-Spinning Reserve,13,10,10,0,"(1,2)",10 minute product
-NonSpinning Reserve,15,8,10,0,"(1,2)",10 minute product
-Supplemental Reserve,20,5,10,0,"(1,2)",30 minute product
-Flexible Ramp Up,15,8,8,0,"(1,2)",
-Flexible Ramp Down,15,8,8,0,"(1,2)",

@@ -1,2 +1,0 @@
-Storage ID,Bus ID,In Service,Rated Power MW,Rated Capacity MWh,Capacity Retention Rate,Conversion Efficiency,Battery Discharging Cost $/MWh,Initial SoC,Minimum SoC,Maximum SoC
-BESS_0,3,1,10,10,1,0.95,20,0.5,0.1,1

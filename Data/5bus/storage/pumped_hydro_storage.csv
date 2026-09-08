@@ -1,2 +1,0 @@
-Storage ID,Bus ID,In Service,Supports HSC,Units,Pmax Generator MW,Pmin Generator MW,Prated Pump MW,Max Gen Discharge Flow-Rate m^3/s,Min Gen Discharge Flow-Rate m^3/s,Max Pumping Flow-Rate m^3/s,Power-Flow Conversion Coefficient MW/m^3,Generator Efficiency,Pump Efficiency,Generator Startup Cost $,Pump Startup Cost $,Max Upper Reservoir Volume m^3,Initial SoC,Minimum SoC,Maximum SoC
-PHS_0,4,1,1,2,10,3,10,14,4.2,14,0.71,0.9,0.9,200,200,112,0.5,0.1,1

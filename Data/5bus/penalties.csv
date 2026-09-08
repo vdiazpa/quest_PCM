@@ -1,9 +1,0 @@
-Name,Cost $/MWh
-Load Curtailment,1000
-DA Reserve Shortfall,500
-Regulation shortfall,500
-Spinning reserve shortfall,400
-Nonspinning reserve shortfall,400
-Supplemental reserve shortfall,400
-Flexramp shortfall,400
-Contingency flow violation,100

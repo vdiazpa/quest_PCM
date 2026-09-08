@@ -200,13 +200,14 @@ def extract_init_state_and_fixed_from_model(model, t_roll_local, md_wind, fix_va
             fixed_vars["UnitStart"] = {(g, t): int(round(value(model.UnitStart[g, tkey(t)])))for g in model.ThermalGenerators for t in times}
         if hasattr(model, "UnitStop"):
             fixed_vars["UnitStop"] = {(g, t): int(round(value(model.UnitStop[g, tkey(t)])))for g in model.ThermalGenerators for t in times}
+        if hasattr(model, "RegulationOn"):
+            fixed_vars["RegulationOn"] = {idx: int(round(value(model.RegulationOn[idx]))) for idx in model.RegulationOn if int(idx[-1]) <= tr}
 
-        #storage (if present)
-        if hasattr(model, "StorageUnits"):
-            if hasattr(model, "IsCharging"):
-                fixed_vars["IsCharging"] = {(b, t): int(round(value(model.IsCharging[b, tkey(t)]))) for b in model.StorageUnits for t in times}
-            if hasattr(model, "IsDischarging"):
-                fixed_vars["IsDischarging"] = {(b, t): int(round(value(model.IsDischarging[b, tkey(t)]))) for b in model.StorageUnits for t in times}
+        #generic storage 
+        if hasattr(model, "InputStorage"):
+            fixed_vars["InputStorage"] = {(b, t): int(round(value(model.InputStorage[b, tkey(t)]))) for b in model.GESS_Storage for t in times}
+        if hasattr(model, "OutputStorage"):
+            fixed_vars["OutputStorage"] = {(b, t): int(round(value(model.OutputStorage[b, tkey(t)]))) for b in model.GESS_Storage for t in times}
 
 
     return InitialState, fixed_vars
@@ -246,14 +247,24 @@ def load_fixed_sol(model, fixed_sol=None):
     model.fix_sol_constraint = ConstraintList(doc = "Fix_Vars_from_RH_Sol")
     print("Fixing stitched solution to model...")
     for (g,t), val in fixed_sol["UnitOn"].items():
-        #model.UnitOn[g,t].fix(int(round(val)))
-        model.fix_sol_constraint.add(expr = model.UnitOn[g,t] == int(round(val)))
+        model.UnitOn[g,t].fix(int(round(val)))
+        # model.fix_sol_constraint.add(expr = model.UnitOn[g,t] == int(round(val)))
     for (g,t), val in fixed_sol["UnitStart"].items():
-        #model.UnitStart[g,t].fix(int(round(val)))
-        model.fix_sol_constraint.add(expr = model.UnitStart[g,t] == int(round(val)))
+        model.UnitStart[g,t].fix(int(round(val)))
+        # model.fix_sol_constraint.add(expr = model.UnitStart[g,t] == int(round(val)))
     for (g,t), val in fixed_sol["UnitStop"].items():
-        #model.UnitStop[g,t].fix(int(round(val)))
-        model.fix_sol_constraint.add(expr = model.UnitStop[g,t] == int(round(val)))
+        model.UnitStop[g,t].fix(int(round(val)))
+        # model.fix_sol_constraint.add(expr = model.UnitStop[g,t] == int(round(val)))
+
+    if hasattr(model, "InputStorage"):
+        for idx, val in fixed_sol["InputStorage"].items():
+            model.InputStorage[idx].fix(int(round(val)))
+    if hasattr(model, "OutputStorage"):
+        for idx, val in fixed_sol["OutputStorage"].items():
+            model.OutputStorage[idx].fix(int(round(val)))
+    if hasattr(model, "RegulationOn"):
+        for idx, val in fixed_sol["RegulationOn"].items():
+            model.RegulationOn[idx].fix(int(round(val)))
 
     return  model
 
@@ -278,50 +289,15 @@ def write_state_comparison_csv(init_states, md_window, model, filename="state_ch
 
     print(f"\nState comparison written to {filename}\n")
 
-def add_branch_contingencies(md, max_cont=None):
-    branches = md.data["elements"]["branch"]
-
-    G = nx.Graph()
-
-    for br, data in branches.items():
-        if data.get("in_service", True):
-            G.add_edge(data["from_bus"], data["to_bus"], name=br )
-
-    bridge_branches = set()
-    for u, v in nx.bridges(G):
-        bridge_branches.add(G[u][v]["name"])
-
-    print("Removing islanding contingency branches:")
-    print(sorted(bridge_branches))
-
-    conts = {}
-    for k, br in enumerate(branches):
-        if max_cont is not None and len(conts) >= max_cont:
-            break
-
-        if not branches[br].get("in_service", True):
-            continue
-
-        if br in bridge_branches:
-            continue
-
-        conts[f"cont_{br}"] = { "branch_contingency": br }
-    md.data["elements"]["contingency"] = conts
-    print(f"Added {len(conts)} non-islanding branch contingencies")
-
-    return md
 
 def relax_lookahead_binaries(model, n_fixed_local):
     relaxed = {}
-
     for var in model.component_objects(Var, active=True):
 
         count = 0
 
         for idx in var:
-
             v = var[idx]
-
             if not v.is_binary():
                 continue
 
@@ -365,7 +341,7 @@ def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=
 
     init_states    = None
     windows, fixes = RH_windows_fixes(len(md_full.data['system']['time_keys']), F, L)
-    fixed_sol      = {"UnitOn": {}, "UnitStart": {}, "UnitStop": {} ,"IsCharging": {}, "IsDischarging": {}} #,"ChargePower": {}, "DischargePower": {}, "SoC": {} }
+    fixed_sol      = {"UnitOn": {}, "UnitStart": {}, "UnitStop": {} ,"InputStorage": {}, "OutputStorage": {}, "RegulationOn": {}} #,"ChargePower": {}, "DischargePower": {}, "SoC": {} }
 
     #for code profiling
     slice_time = 0.0
@@ -442,29 +418,26 @@ def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=
     
 #_____________________________________________/Evaluate stitched solution 
 
-    # print(f"\n{bar}", "\nSolving fixed-commitment dispatch...", f"\n{bar}")
+    print(f"\n{bar}", "\nSolving fixed-commitment dispatch...", f"\n{bar}")
 
-    # t_dispatch_build = time.perf_counter()
-    # md_dispatch = deepcopy(md_full)
-    # md_dispatch.data["elements"].pop("contingency", None)  # remove contingencies for dispatch solve
+    t_dispatch_build = time.perf_counter()
+    md_dispatch = deepcopy(md_full)
+    md_dispatch.data["elements"].pop("contingency", None)  # remove contingencies for dispatch solve
 
-    # model = generate_model(md_dispatch, uc_formulation=formulation, 
-    #     relax_binaries=True, slack_type=SlackType.BUS_BALANCE,PTDF_matrix_dict=PTDF_cache, ptdf_options=ptdf_options)
-    # t_dispatch_build = time.perf_counter() - t_dispatch_build
+    model = simulator.egret_uc_model_generator(md_dispatch, ptdf_options={"lazy": False}, PTDF_matrix_dict=ptdf_cache)
+    model = load_fixed_sol(model, fixed_sol)
 
     # model.dual=Suffix(direction=Suffix.IMPORT)
 
     # model = load_fixed_sol(model, fixed_sol)
 
-    # t_dispatch_solve = time.perf_counter()
-    # _solve_unit_commitment(
-    #     model, solver='gurobi', 
-    #     mipgap=bench_gap, timelimit=None, solver_tee=tee, symbolic_solver_labels=False, 
-    #     solver_options=None, solve_method_options=None, relaxed=True)
-    # t_dispatch_solve = time.perf_counter() - t_dispatch_solve
+    t_dispatch_solve = time.perf_counter()
+    simulator.egret_uc_solver(model, solver='gurobi', mipgap=RH_opt_gap, timelimit=None, solver_tee=False, symbolic_solver_labels=False, solver_options = None, solve_method_options=None, relaxed=False)
+
+    t_dispatch_solve = time.perf_counter() - t_dispatch_solve
     
-    # print("RH Objective:", round(value(list(model.component_data_objects(Objective, active=True))[0]),2))
-    # print(f"{bar}", "\nRH solution complete", f"\n{bar}")
+    print("RH Objective:", round(value(list(model.component_data_objects(Objective, active=True))[0]),2))
+    print(f"{bar}", "\nRH solution complete", f"\n{bar}")
 
     return model, None, fixed_sol, {"slice_time": slice_time, "build_time": build_time, "rh_solve_time": rh_solve_time, "t_dispatch_build": t_dispatch_build, "t_dispatch_solve": t_dispatch_solve}
 
