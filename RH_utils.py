@@ -421,17 +421,23 @@ def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=
     print(f"\n{bar}", "\nSolving fixed-commitment dispatch...", f"\n{bar}")
 
     t0_dispatch_build = time.perf_counter()
+
     md_dispatch = deepcopy(md_full)
-    md_dispatch.data["elements"].pop("contingency", None)  # remove contingencies for dispatch solve
-    model = simulator.egret_uc_model_generator(md_dispatch, ptdf_options={"lazy": True}, PTDF_matrix_dict=ptdf_cache)
+    model = simulator.egret_uc_model_generator(md_dispatch, ptdf_options={"lazy": False}, PTDF_matrix_dict=ptdf_cache)
     model = load_fixed_sol(model, fixed_sol)
+
     t_dispatch_build = time.perf_counter() - t0_dispatch_build
 
+    t_dispatch_solve0 = time.perf_counter()
     simulator.egret_uc_solver(model, solver='gurobi', mipgap=RH_opt_gap, timelimit=None, solver_tee=False, symbolic_solver_labels=False, solver_options = None, solve_method_options=None, relaxed=False)
 
-    t_dispatch_solve = time.perf_counter() - t_dispatch_solve
-    
+    t_dispatch_solve = time.perf_counter() - t_dispatch_solve0
+
     print("RH Objective:", round(value(list(model.component_data_objects(Objective, active=True))[0]),2))
+    print("RH Build Time (secs):", round(build_time,4))
+    print("RH Solve Time (secs):", round(rh_solve_time,4))
+    print("Dispatch Build Time (secs):", round(t_dispatch_build,4))
+    print("Dispatch Solve Time (secs):", round(t_dispatch_solve,4))
     print(f"{bar}", "\nRH solution complete", f"\n{bar}")
 
     return model, None, fixed_sol, {"slice_time": slice_time, "build_time": build_time, "rh_solve_time": rh_solve_time, "t_dispatch_build": t_dispatch_build, "t_dispatch_solve": t_dispatch_solve}
