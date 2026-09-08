@@ -73,14 +73,14 @@ t_rh_end  = time.perf_counter()
 
 #_____________________________________________/Create (monolithic) model with DA model data. Time. Write LP.
 t0 = time.perf_counter()
-da_mod = simulator.egret_uc_model_generator(md_full, ptdf_options={"lazy": True})   # pyomo model with quest storage constraints0
-da_mod.write("questPCM_DA_model_new.lp", io_options={"symbolic_solver_labels": True})
+da_lazy_mod = simulator.egret_uc_model_generator(md_full, ptdf_options={"lazy": True})   # pyomo model with quest storage constraints0
+# da_mod.write("questPCM_DA_model_new.lp", io_options={"symbolic_solver_labels": True})
 t1 = time.perf_counter()     #build time
 
 #_____________________________________________/Solve pyomo model.
 
 pyomo_sol, _, _ = simulator.egret_uc_solver(
-    da_mod, 
+    da_lazy_mod, 
     solver="gurobi",
     mipgap=input_manager.config.get("mipgap", 0.01), 
     timelimit=None, 
@@ -92,7 +92,7 @@ pyomo_sol, _, _ = simulator.egret_uc_solver(
 
 t2 = time.perf_counter() 
 
-mono_obj = value(next(da_mod.component_data_objects(Objective, active=True)))
+lazy_mono_obj = value(next(da_lazy_mod.component_data_objects(Objective, active=True)))
 # da_mod.write("questPCM_DA_model_after_solve.lp", io_options={"symbolic_solver_labels": True}) #c heck in LP if transmission constraints were added. 
 
 #=============== Print mono results
@@ -101,11 +101,37 @@ build_time = t1-t0
 solve_time = t2-t1
 rh_time = t_rh_end - t_rh_start 
 
-print("MONO OBJECTIVE:", mono_obj)
+print("\n====================LAZY PTDF===========================")
+print("MONO OBJECTIVE:", lazy_mono_obj)
 print("MONO BUILD TIME (secs):", round(build_time,4))
 print("MONO SOLVE TIME (secs):", round(solve_time,4))
 print("RH windows solve (secs):", round(rh_time,4))
 
+
+da_mod_mono = simulator.egret_uc_model_generator(md_full, ptdf_options={"lazy": False})   # pyomo model with quest storage constraints0
+# da_mod.write("questPCM_DA_model_new.lp", io_options={"symbolic_solver_labels": True})
+
+#_____________________________________________/Solve pyomo model.
+t3 = time.perf_counter()
+
+pyomo_sol, _, _ = simulator.egret_uc_solver(
+    da_mod_mono, 
+    solver="gurobi",
+    mipgap=input_manager.config.get("mipgap", 0.0001), 
+    timelimit=None, 
+    solver_tee=False, 
+    symbolic_solver_labels=False, 
+    solver_options=None, 
+    solve_method_options=None, 
+    relaxed=False)
+
+t4 = time.perf_counter() - t3
+
+mono_obj = value(next(da_mod_mono.component_data_objects(Objective, active=True)))
+
+print("\n====================Original Monolithic===========================")
+print("MONO OBJECTIVE:", mono_obj)
+print("MONO SOLVE TIME (secs):", round(t4,4))
 
 
 # da_mod = simulator.egret_uc_model_generator(md)

@@ -39,45 +39,53 @@ def RH_windows_fixes(T, F, L):
 
     return windows, fixes
 
-def slice_md(md_full, s_e):
-    """
-    Slice a ModelData object to a subset of time periods.
-    s_e: list of time periods in window (ints), e.g. [1,2,3,4,5].
-    md_full: Egret ModelData instance for full planning horizon.
-    """
-    md = deepcopy(md_full)
+# def slice_md(md_full, s_e):
+#     """
+#     Slice a ModelData object to a subset of time periods.
+#     s_e: list of time periods in window (ints), e.g. [1,2,3,4,5].
+#     md_full: Egret ModelData instance for full planning horizon.
+#     """
+#     md = deepcopy(md_full)
 
-    #1 Update system time_keys as strings
-    md.data["system"]["time_keys"] = [str(t) for t in s_e]              # OJO: Need to fix abt type consistency
+#     #1 Update system time_keys as strings
+#     md.data["system"]["time_keys"] = [str(t) for t in s_e]              # OJO: Need to fix abt type consistency
 
-    #2 Slice load data 
-    elems = md.data["elements"]
-    if "load" in elems:
-        for _, ldict in elems["load"].items():
-            p_load_dict = ldict.get("p_load", None)
-            if isinstance(p_load_dict, dict) and p_load_dict.get("data_type") == "time_series":
-                vals = p_load_dict["values"]
-                new_vals = [vals[t-1] for t in s_e]
-                p_load_dict["values"] = new_vals
-                #print(f"Load {bus} p_load after slicing: {p_load_dict['values']}")
-    else:
-        print("Warning: 'load' not found in elements")
+#     #2 Slice load data 
+#     elems = md.data["elements"]
+#     if "load" in elems:
+#         for _, ldict in elems["load"].items():
+#             p_load_dict = ldict.get("p_load", None)
+#             if isinstance(p_load_dict, dict) and p_load_dict.get("data_type") == "time_series":
+#                 vals = p_load_dict["values"]
+#                 new_vals = [vals[t-1] for t in s_e]
+#                 p_load_dict["values"] = new_vals
+#                 #print(f"Load {bus} p_load after slicing: {p_load_dict['values']}")
+#     else:
+#         print("Warning: 'load' not found in elements")
 
-    #3 Slice renewable generator data 
-    if "generator" in elems:
-        for _, gdict in elems["generator"].items():
-            if gdict.get("generator_type") == "renewable":
-                for attr in ("p_min", "p_max"):
-                    pdict = gdict.get(attr, None)
-                    if isinstance(pdict, dict) and pdict.get("data_type") == "time_series":
-                        vals = pdict["values"]
-                        new_vals = [vals[t-1] for t in s_e]
-                        pdict["values"] = new_vals
-                #print(f"Gen {gen} p_min after slicing: {gdict['p_min'].get('values', None)}")
-    else:
-        print("Warning: 'generator' not found in elements")
+#     #3 Slice renewable generator data 
+#     if "generator" in elems:
+#         for _, gdict in elems["generator"].items():
+#             if gdict.get("generator_type") == "renewable":
+#                 for attr in ("p_min", "p_max"):
+#                     pdict = gdict.get(attr, None)
+#                     if isinstance(pdict, dict) and pdict.get("data_type") == "time_series":
+#                         vals = pdict["values"]
+#                         new_vals = [vals[t-1] for t in s_e]
+#                         pdict["values"] = new_vals
+#                 #print(f"Gen {gen} p_min after slicing: {gdict['p_min'].get('values', None)}")
+#     else:
+#         print("Warning: 'generator' not found in elements")
 
-    return md
+#     return md
+
+def slice_md(md_full, s_e): 
+
+    all_keys = md_full.data["system"]["time_keys"]
+    selected_keys = [all_keys[t-1] for t in s_e]
+    md_window = md_full.clone_at_time_keys(selected_keys)
+    md_window.data["current_market"] = "DA"
+    return md_window
 
 def apply_init_state_to_md(md, init_states):
 
@@ -148,12 +156,8 @@ def extract_init_state_and_fixed_from_model(model, t_roll_local, md_wind, fix_va
             status_dict[g] = streak if last_status[g] == 1 else -streak
 
     #  InitialState carryover 
-    InitialState = { "PowerGeneratedT0": {g: value(model.PowerGenerated[g, tkey(tr)]) for g in model.ThermalGenerators}, "StatusAtT0": status_dict}
-
-    # If storage exists in the model, include it 
-    # if hasattr(model, "StorageUnits") and hasattr(model, "SoC"):
-    #     InitialState["SoCT0"] = {b: value(model.SoC[b, tkey(tr)]) for b in model.StorageUnits}
-    # If storage exists in the model, include SoC carryover
+    baseMVA = md_wind.data["system"]["baseMVA"]
+    InitialState = { "PowerGeneratedT0": {g: value(model.PowerGenerated[g, tkey(tr)])*baseMVA for g in model.ThermalGenerators}, "StatusAtT0": status_dict}
 
     if hasattr(model, "Storage") and hasattr(model, "SocStorage"):
         storage_units = list(model.Storage)
@@ -353,6 +357,7 @@ def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=
 
     for i, (window, fix_periods) in enumerate(zip(windows, fixes)):  #================== Main RH loop
 
+
         t_fix0, t_fix1 = fix_periods
         print(f"\nWindow {i+1}/{len(windows)}: {window} | fix {fix_periods}")
 
@@ -403,6 +408,16 @@ def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=
 
         t_roll_local = window.index(t_fix1) + 1  # local index of t_fix1 in the window (1..len(window))
         init_states, fixed_vars = extract_init_state_and_fixed_from_model(model, t_roll_local, md_window, fix_vars=True)
+
+        if i == 1: 
+            g = next(iter(model.ThermalGenerators))
+            t = list(model.TimePeriods)[0]
+
+            print("baseMVA:", md_window.data["system"]["baseMVA"])
+            print("Pyomo Pmax:", value(model.MaximumPowerOutput[g,t]))
+            print("Pyomo PowerGenerated:", value(model.PowerGenerated[g,t]))
+            print("Original ModelData pmax:", md_window.data["elements"]["generator"][g]["p_max"])
+
 
         #_____________________________________________/Stitch solution 
         for k, vardict in fixed_vars.items():
