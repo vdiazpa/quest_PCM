@@ -403,6 +403,6 @@ def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=
     print("Dispatch Solve Time (secs):", round(t_dispatch_solve,4))
     print(f"{bar}", "\nRH solution complete", f"\n{bar}")
 
-    return model, None, fixed_sol, {"slice_time": slice_time, "build_time": build_time, "rh_solve_time": rh_solve_time, "t_dispatch_build": t_dispatch_build, "t_dispatch_solve": t_dispatch_solve}
+    return model, None, fixed_sol, {"rh_build_time": build_time, "rh_solve_time": rh_solve_time, "t_dispatch_build": t_dispatch_build, "t_dispatch_solve": t_dispatch_solve, "rh_objective": value(list(model.component_data_objects(Objective, active=True))[0])}
 
 

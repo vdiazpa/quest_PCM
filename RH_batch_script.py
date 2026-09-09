@@ -42,10 +42,11 @@ mono_obj      = value(next(da_mod_mono.component_data_objects(Objective, active=
 
 #===================================Experiments Loop
 
+rows = []
+
 for g in opt_gaps: 
 
     #============================================Build & solve DA w. lazy PTDF algorithm. Time it.
-
     t_lazy_st   = time.perf_counter() 
     lazy_mod    = simulator.egret_uc_model_generator(md_full, ptdf_options={"lazy": True})   
     p_sol, _, _ = simulator.egret_uc_solver(lazy_mod, solver="gurobi", mipgap=g, timelimit=None, solver_tee=False, symbolic_solver_labels=False, solver_options=None, solve_method_options=None, relaxed=False)
@@ -57,10 +58,11 @@ for g in opt_gaps:
         for r in relax_look:
             F, L = t
             t_rh_start = time.perf_counter() 
-            rh_mod, _, rh_sol, ts = run_RH_egret(md_full, F=F, L=L, simulator=simulator, RH_opt_gap=g, lazy_ptdf=False, cache_ptdf=True, relax_lookahead=r)
+            rh_mod, _, rh_sol, res = run_RH_egret(md_full, F=F, L=L, simulator=simulator, RH_opt_gap=g, lazy_ptdf=False, cache_ptdf=True, relax_lookahead=r)
             t_rh_end   = time.perf_counter()
             rh_time    = t_rh_end - t_rh_start 
             print(f"F={F}, L={L}, relax_lookahead={r}, RH_opt_gap={g}, RH windows solve (secs): {round(rh_time,4)}")
+            rows.append({"F": F, "L": L, "relax_lookahead": r, "opt_gap": g, "RH_solve_time": rh_time, "RH_objective": res["rh_objective"], "lazy_solve_time": t_lazy, "lazy_objective": lazy_obj, "mono_solve_time": t_mono_end, "mono_objective": mono_obj, "rh_build_time": res["rh_build_time"], "rh_solve_time": res["rh_solve_time"], "rh_dispatch_build": res["t_dispatch_build"], "rh_dispatch_solve": res["t_dispatch_solve"]})
 
 
 
