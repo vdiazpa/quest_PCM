@@ -1,5 +1,5 @@
 solver: 'gurobi' # "cplex", "gurobi", "glpk", "cbc", "xpress", "knitro"
-mipgap: 0.01 #MIP gap for the solver
+mipgap: 0.001 #MIP gap for the solver
 baseMVA: 100.0 # Base MVA for the system
 start_date: 02/10/2020
 end_date: 02/10/2020

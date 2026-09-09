@@ -4,7 +4,7 @@ from egret.common.log import logger as egret_logger
 from pcm.data_manager.data_main import DataManager
 from pcm.market_manager.market_main import MarketSimulator
 import networkx as nx
-# from RH_utils import *
+from RH_utils import run_RH_egret
 import logging
 import time
 egret_logger.setLevel(logging.ERROR)
@@ -43,7 +43,7 @@ def add_branch_contingencies(md, max_cont=None):
 
     return md
 
-#_____________________________________________/Create a simulator object.
+#_____________________________________________/Read data & create a simulator object.
 
 # main_data_path = "Data/duke_revised"
 main_data_path = "Data/RTS_GMLC"
@@ -54,9 +54,9 @@ input_manager.export_input_json()
 simulator = MarketSimulator(input_manager)
 simulator.create_DA_RT_models()
 
-#_____________________________________________/Extract DA model data (egret) from simulator.
+#_____________________________________________/Extract DA model data from simulator.
 
-from RH_utils import run_RH_egret
+t_rh_start = time.perf_counter()
 
 md_full = simulator.DA_model.clone()
 md_full.data["current_market"] = "DA"
@@ -67,22 +67,22 @@ md_full.data["current_market"] = "DA"
 #         if gd.get("startup_fuel") == []:
 #             gd.pop("startup_fuel")
 
-t_rh_start = time.perf_counter()
-rh_mod, _, fixed_sol, times = run_RH_egret(md_full, F=8, L=6, simulator=simulator, RH_opt_gap=0.01, lazy_ptdf=False, cache_ptdf=True, relax_lookahead=True)
+
+#_____________________________________________/Run RH and time it. 
+rh_mod, _, fixed_sol, times = run_RH_egret(md_full, F=8, L=6, simulator=simulator, RH_opt_gap=0.001, lazy_ptdf=False, cache_ptdf=True, relax_lookahead=True)
 t_rh_end  = time.perf_counter()
 
-#_____________________________________________/Create (monolithic) model with DA model data. Time. Write LP.
+#_____________________________________________/Create DA model and solve with lazy PTDF. Time. 
 t0 = time.perf_counter()
 da_lazy_mod = simulator.egret_uc_model_generator(md_full, ptdf_options={"lazy": True})   # pyomo model with quest storage constraints0
 # da_mod.write("questPCM_DA_model_new.lp", io_options={"symbolic_solver_labels": True})
 t1 = time.perf_counter()     #build time
 
-#_____________________________________________/Solve pyomo model.
 
 pyomo_sol, _, _ = simulator.egret_uc_solver(
     da_lazy_mod, 
     solver="gurobi",
-    mipgap=input_manager.config.get("mipgap", 0.01), 
+    mipgap=input_manager.config.get("mipgap", 0.001), 
     timelimit=None, 
     solver_tee=False, 
     symbolic_solver_labels=False, 
@@ -117,7 +117,7 @@ t3 = time.perf_counter()
 pyomo_sol, _, _ = simulator.egret_uc_solver(
     da_mod_mono, 
     solver="gurobi",
-    mipgap=input_manager.config.get("mipgap", 0.0001), 
+    mipgap=0.00, 
     timelimit=None, 
     solver_tee=False, 
     symbolic_solver_labels=False, 

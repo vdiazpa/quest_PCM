@@ -1,0 +1,66 @@
+from pyomo.environ import Objective, value
+from egret.common.log import logger as egret_logger
+from pcm.data_manager.data_main import DataManager
+from pcm.market_manager.market_main import MarketSimulator
+import networkx as nx
+from RH_utils import run_RH_egret
+import logging
+import time
+egret_logger.setLevel(logging.ERROR)
+
+
+#_____________________________________________/Read data & create a simulator object.
+
+# main_data_path = "Data/duke_revised"
+main_data_path = "Data/RTS_GMLC"
+
+yaml_path = "config/GMLC_config.yaml"
+input_manager = DataManager(main_data_path, yaml_path)
+input_manager.export_input_json()
+simulator = MarketSimulator(input_manager)
+simulator.create_DA_RT_models()
+
+#==================================-Experimental Parameters
+
+FandLs     = [(4,6), (8,4), (8,6), (12,6)]
+relax_look = [True, False]
+opt_gaps   = [0.01, 0.001]
+
+#===================================-Clone DA model 
+
+md_full = simulator.DA_model.clone()
+md_full.data["current_market"] = "DA"
+
+#==================================Build and solve mono to 0% optimality gap. Time it.
+
+da_mod_mono = simulator.egret_uc_model_generator(md_full, ptdf_options={"lazy": False})   # pyomo model with quest storage constraints0
+
+t_mono_st     = time.perf_counter()
+mod_sol, _, _ = simulator.egret_uc_solver(da_mod_mono, solver="gurobi",mipgap=0.00,  timelimit=None, solver_tee=False, symbolic_solver_labels=False, solver_options=None, solve_method_options=None, relaxed=False)
+t_mono_end    = time.perf_counter() - t_mono_st #solve time monolithic
+mono_obj      = value(next(da_mod_mono.component_data_objects(Objective, active=True)))
+
+#===================================Experiments Loop
+
+for g in opt_gaps: 
+
+    #============================================Build & solve DA w. lazy PTDF algorithm. Time it.
+
+    t_lazy_st   = time.perf_counter() 
+    lazy_mod    = simulator.egret_uc_model_generator(md_full, ptdf_options={"lazy": True})   
+    p_sol, _, _ = simulator.egret_uc_solver(lazy_mod, solver="gurobi", mipgap=g, timelimit=None, solver_tee=False, symbolic_solver_labels=False, solver_options=None, solve_method_options=None, relaxed=False)
+    lazy_obj    = value(next(lazy_mod.component_data_objects(Objective, active=True)))
+    t_lazy_end  = time.perf_counter()     
+    t_lazy      = t_lazy_end - t_lazy_st
+
+    for t in FandLs: 
+        for r in relax_look:
+            F, L = t
+            t_rh_start = time.perf_counter() 
+            rh_mod, _, rh_sol, ts = run_RH_egret(md_full, F=F, L=L, simulator=simulator, RH_opt_gap=g, lazy_ptdf=False, cache_ptdf=True, relax_lookahead=r)
+            t_rh_end   = time.perf_counter()
+            rh_time    = t_rh_end - t_rh_start 
+            print(f"F={F}, L={L}, relax_lookahead={r}, RH_opt_gap={g}, RH windows solve (secs): {round(rh_time,4)}")
+
+
+

@@ -1,7 +1,6 @@
 #RH_utils.py
 
 from copy import deepcopy
-import networkx as nx
 from pyomo.environ import *
 import time 
 
@@ -39,45 +38,6 @@ def RH_windows_fixes(T, F, L):
 
     return windows, fixes
 
-# def slice_md(md_full, s_e):
-#     """
-#     Slice a ModelData object to a subset of time periods.
-#     s_e: list of time periods in window (ints), e.g. [1,2,3,4,5].
-#     md_full: Egret ModelData instance for full planning horizon.
-#     """
-#     md = deepcopy(md_full)
-
-#     #1 Update system time_keys as strings
-#     md.data["system"]["time_keys"] = [str(t) for t in s_e]              # OJO: Need to fix abt type consistency
-
-#     #2 Slice load data 
-#     elems = md.data["elements"]
-#     if "load" in elems:
-#         for _, ldict in elems["load"].items():
-#             p_load_dict = ldict.get("p_load", None)
-#             if isinstance(p_load_dict, dict) and p_load_dict.get("data_type") == "time_series":
-#                 vals = p_load_dict["values"]
-#                 new_vals = [vals[t-1] for t in s_e]
-#                 p_load_dict["values"] = new_vals
-#                 #print(f"Load {bus} p_load after slicing: {p_load_dict['values']}")
-#     else:
-#         print("Warning: 'load' not found in elements")
-
-#     #3 Slice renewable generator data 
-#     if "generator" in elems:
-#         for _, gdict in elems["generator"].items():
-#             if gdict.get("generator_type") == "renewable":
-#                 for attr in ("p_min", "p_max"):
-#                     pdict = gdict.get(attr, None)
-#                     if isinstance(pdict, dict) and pdict.get("data_type") == "time_series":
-#                         vals = pdict["values"]
-#                         new_vals = [vals[t-1] for t in s_e]
-#                         pdict["values"] = new_vals
-#                 #print(f"Gen {gen} p_min after slicing: {gdict['p_min'].get('values', None)}")
-#     else:
-#         print("Warning: 'generator' not found in elements")
-
-#     return md
 
 def slice_md(md_full, s_e): 
 
@@ -113,7 +73,6 @@ def extract_init_state_and_fixed_from_model(model, t_roll_local, md_wind, fix_va
       fixed_vars:   dict of variable values for times <= t_roll_local (optional)
     """
 
-    # Egret models often have time keys as strings ("1","2",...)
     samp_t = next(iter(model.TimePeriods))
 
     def tkey(t_int):
@@ -339,13 +298,12 @@ def relax_lookahead_binaries(model, n_fixed_local):
 def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=False, write_csv=False, cache_ptdf=False, lazy_ptdf=False, relax_lookahead=False):
 
     #========================================================================================== Initialization
-    # ptdf_options, PTDF_cache = build_ptdf_dict(md_full)
 
     ptdf_cache = {} if cache_ptdf else None
 
     init_states    = None
     windows, fixes = RH_windows_fixes(len(md_full.data['system']['time_keys']), F, L)
-    fixed_sol      = {"UnitOn": {}, "UnitStart": {}, "UnitStop": {} ,"InputStorage": {}, "OutputStorage": {}, "RegulationOn": {}} #,"ChargePower": {}, "DischargePower": {}, "SoC": {} }
+    fixed_sol      = {"UnitOn": {}, "UnitStart": {}, "UnitStop": {} ,"InputStorage": {}, "OutputStorage": {}, "RegulationOn": {}} 
 
     #for code profiling
     slice_time = 0.0
@@ -408,16 +366,6 @@ def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=
 
         t_roll_local = window.index(t_fix1) + 1  # local index of t_fix1 in the window (1..len(window))
         init_states, fixed_vars = extract_init_state_and_fixed_from_model(model, t_roll_local, md_window, fix_vars=True)
-
-        if i == 1: 
-            g = next(iter(model.ThermalGenerators))
-            t = list(model.TimePeriods)[0]
-
-            print("baseMVA:", md_window.data["system"]["baseMVA"])
-            print("Pyomo Pmax:", value(model.MaximumPowerOutput[g,t]))
-            print("Pyomo PowerGenerated:", value(model.PowerGenerated[g,t]))
-            print("Original ModelData pmax:", md_window.data["elements"]["generator"][g]["p_max"])
-
 
         #_____________________________________________/Stitch solution 
         for k, vardict in fixed_vars.items():
