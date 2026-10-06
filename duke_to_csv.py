@@ -5,11 +5,11 @@
 import pandas as pd
 import os
 
-folder_with_data = "Data/duke_revised" #path to folder with raw duke data files.
+folder_with_data = "Data/duke_revised/source_data" #path to folder with raw duke data files.
 
 #----------------------Create branch csv for QuESt PCM
 
-line_data = pd.read_csv(os.path.join(folder_with_data, "line_params_new.csv"))
+line_data = pd.read_csv(os.path.join(folder_with_data, "line_params.csv"))
 
 #Line ID,From Bus,To Bus,R,X,B,Cont Rating,LTE Rating,STE Rating,Tr Ratio
 
@@ -18,8 +18,8 @@ for i, row in line_data.iterrows():
     line_id     = row["line"]
     from_bus    = row["line"].split("_n")[0]
     to_bus      = "n" + row["line"].split("_n")[1]
-    X           = row["reactance"]/(row["voltage_class"]**2) # ohms -> pu.
-    cont_rating = row["limit"]
+    X           = row["reactance_pu"]
+    cont_rating = row["limit_review"]*1.3
     Tr_ratio    = 0.0
     rows.append({ "Line ID": line_id, "From Bus": from_bus, "To Bus": to_bus, "X": X, "Cont Rating": cont_rating,  "LTE Rating": cont_rating, "STE Rating": cont_rating, "Tr Ratio": Tr_ratio })
 
@@ -191,5 +191,5 @@ load_data.insert(0, "Year", dates.year)
 
 # print(load_data.head())
 
-load_data.to_csv(os.path.join(folder_with_data, "load_timeseries_DA.csv"), index=False)
+load_data.to_csv(os.path.join(folder_with_data, "osm_equal_recipient_existing_load_buses_snap10.csv"), index=False)
 
