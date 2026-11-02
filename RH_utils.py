@@ -175,32 +175,32 @@ def extract_init_state_and_fixed_from_model(model, t_roll_local, md_wind, fix_va
 
     return InitialState, fixed_vars
 
-def save_solution_to_csv(fixed_sol):
+def save_solution_to_csv(fixed_sol, filename="RH_solution.csv"):
+
     import csv
-    all_t = sorted({t for (g,t) in fixed_sol['UnitOn'].keys()})
-    all_g = sorted({g for (g,t) in fixed_sol['UnitOn'].keys()})
+    import json 
+    from pathlib import Path
 
-    with open(f"RH_solution.csv", mode='w', newline='') as file:
+    filename = Path(filename)
+    filename.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(filename, mode='w', newline='') as file:
+
         writer = csv.writer(file)
-        writer.writerow(["Variable", "Unit"] + all_t)
+        writer.writerow(["variable", "component", "time", "value"])
 
-        for g in all_g:
-            row = ["UnitOn", g]
-            for t in all_t:
-                row.append(fixed_sol['UnitOn'].get((g,t), ""))
-            writer.writerow(row)
+        #for every variable in fixed_solution
+        for var, entries in fixed_sol.items(): 
+            for key, val, in entries.items():
 
-        for g in all_g:
-            row = ["UnitStart", g]
-            for t in all_t:
-                row.append(fixed_sol['UnitStart'].get((g,t), ""))
-            writer.writerow(row)
+                if isinstance(key, tuple) and len(key) == 2:
+                    component, t = key
+                else:
+                    component, t = key, ""
+                component = json.dumps(component, default=str)
+                writer.writerow([var, component, t, val])
 
-        for g in all_g:
-            row = ["UnitStop", g]
-            for t in all_t:
-                row.append(fixed_sol['UnitStop'].get((g,t), ""))
-            writer.writerow(row)
+    print(f"Fixed solution saved to: {filename}")
 
 def load_fixed_sol(model, fixed_sol=None): 
 
@@ -252,7 +252,6 @@ def write_state_comparison_csv(init_states, md_window, model, filename="state_ch
 
     print(f"\nState comparison written to {filename}\n")
 
-
 def relax_lookahead_binaries(model, n_fixed_local):
     relaxed = {}
     for var in model.component_objects(Var, active=True):
@@ -295,7 +294,7 @@ def relax_lookahead_binaries(model, n_fixed_local):
         print(f"  {name}: {n}")
 
 
-def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=False, write_csv=False, cache_ptdf=False, lazy_ptdf=False, relax_lookahead=False):
+def run_RH(md_full, F, L, simulator, RH_opt_gap=0.01, solver_options = None, cache_ptdf=False, lazy_ptdf=False, relax_lookahead=False):
 
     #========================================================================================== Initialization
 
@@ -306,11 +305,7 @@ def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=
     fixed_sol      = {"UnitOn": {}, "UnitStart": {}, "UnitStop": {} ,"InputStorage": {}, "OutputStorage": {}, "RegulationOn": {}} 
 
     #for code profiling
-    slice_time = 0.0
-    build_time = 0.0
-    rh_solve_time = 0.0
-    t_dispatch_build = 0.0
-    t_dispatch_solve = 0.0
+    slice_time, build_time, rh_solve_time, t_dispatch_build, t_dispatch_solve = 0.0, 0.0, 0.0, 0.0, 0.0
 
 
     for i, (window, fix_periods) in enumerate(zip(windows, fixes)):  #================== Main RH loop
@@ -361,7 +356,8 @@ def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=
 
         #_____________________________________________/Solve
         t_rh_solve     = time.perf_counter()
-        simulator.egret_uc_solver(model, solver='gurobi', mipgap=RH_opt_gap, timelimit=None, solver_tee=False, symbolic_solver_labels=False, solver_options = None, solve_method_options=None, relaxed=False)
+        simulator.egret_uc_solver(
+            model, solver='gurobi', mipgap=RH_opt_gap, timelimit=None, solver_tee=True, symbolic_solver_labels=False, solver_options = solver_options, solve_method_options=None, relaxed=False)
         rh_solve_time += time.perf_counter() - t_rh_solve
 
         t_roll_local = window.index(t_fix1) + 1  # local index of t_fix1 in the window (1..len(window))
@@ -376,9 +372,6 @@ def run_RH_egret(md_full, F, L, simulator, RH_opt_gap=0.01, bench_gap=0.01, tee=
                 if t_fix0 <= t_global <= t_fix1:
                     fixed_sol[k][(idx, t_global)] = v
 
-    if write_csv:
-        save_solution_to_csv(fixed_sol)
-    
 #_____________________________________________/Evaluate stitched solution 
 
     print(f"\n{bar}", "\nSolving fixed-commitment dispatch...", f"\n{bar}")

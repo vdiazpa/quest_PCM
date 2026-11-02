@@ -6,10 +6,12 @@ from pcm.market_manager.market_main import MarketSimulator
 from pcm.result_manager.result_main import ResultManager
 import networkx as nx
 import pandas as pd
-from RH_utils import run_RH_egret
-import logging
-import time
-egret_logger.setLevel(logging.ERROR)
+# from RH_utils import run_RH
+# import logging
+# import time
+from pyomo.environ import *
+
+# egret_logger.setLevel(logging.ERROR)
 
 
 def add_branch_contingencies(md, max_cont=None):
@@ -56,14 +58,59 @@ input_manager.export_input_json()
 simulator = MarketSimulator(input_manager)
 simulator.create_DA_RT_models()
 
+
+def relax_lookahead_binaries(model, periods_not_relaxed=12):
+    time_periods = set(int(t) for t in model.TimePeriods)
+
+    for var in model.component_objects(Var, active=True):
+        for idx in var:
+            v = var[idx]
+            if not v.is_binary():
+                continue
+
+            idx_tuple = idx if isinstance(idx, tuple) else (idx,)
+
+            t_local = None
+            for item in reversed(idx_tuple):
+                try:
+                    ti = int(item)
+                    if ti in time_periods:
+                        t_local = ti
+                        break
+                except (TypeError, ValueError):
+                    pass
+
+            if t_local is None:
+                continue
+
+            # relax only lookahead periods
+            if t_local > periods_not_relaxed:
+                v.domain = UnitInterval
+
+def print_num_binaries(model):
+    num_binaries = 0
+    for var in model.component_objects(Var, active=True):
+        for idx in var:
+            v = var[idx]
+            if v.is_binary():
+                num_binaries +=1
+    print(num_binaries)
 #_____________________________________________/Extract DA model data from simulator.
 
-t_rh_start = time.perf_counter()
+# t_rh_start = time.perf_counter()
 
 md_full = simulator.DA_model.clone()
 md_full.data["current_market"] = "DA"
 md_full.data["system"]["timestamp"] = [f"{hour-1:02d}:00" for hour in input_manager.DA_periods]
 # md_full.write("questPCM_DA_model.json")
+
+model = simulator.egret_uc_model_generator(md_full)
+
+print_num_binaries(model)
+
+relax_lookahead_binaries(model)
+
+print_num_binaries(model)
 
 # for g, gd in md_full.data["elements"]["generator"].items():
 #     if gd.get("generator_type") in ["thermal", "Thermal"]:
@@ -71,9 +118,13 @@ md_full.data["system"]["timestamp"] = [f"{hour-1:02d}:00" for hour in input_mana
 #             gd.pop("startup_fuel")
 
 
-#_____________________________________________/Run RH and time it. 
-# rh_mod, _, fixed_sol, times = run_RH_egret(md_full, F=4, L=6, simulator=simulator, RH_opt_gap=0.01, lazy_ptdf=False, cache_ptdf=True, relax_lookahead=True)
-# t_rh_end  = time.perf_counter()
+
+# #_____________________________________________/Run RH and time it. 
+# rh_mod, _, fixed_sol, times = run_RH(md_full, F=8, L=6, simulator=simulator, RH_opt_gap=0.01, lazy_ptdf=False, cache_ptdf=True, relax_lookahead=True)
+# # t_rh_end  = time.perf_counter()
+
+# rh_mod, _, fixed_sol, times = run_RH(md_full, F=8, L=6, simulator=simulator, RH_opt_gap=0.01, lazy_ptdf=False, cache_ptdf=True, relax_lookahead=False)
+
 
 # #convert solved RH to Egret md
 # rh_md = simulator.egret_uc_result_exporter(rh_mod, relaxed=False)
@@ -94,27 +145,27 @@ md_full.data["system"]["timestamp"] = [f"{hour-1:02d}:00" for hour in input_mana
 # print("RH windows solve (secs):", round(rh_time,4))
 
 # #_____________________________________________/Create DA model and solve with lazy PTDF. Time. 
-t0 = time.perf_counter()
-da_lazy_mod = simulator.egret_uc_model_generator(md_full, ptdf_options={"lazy": True})   # pyomo model with quest storage constraints0
-# da_mod.write("questPCM_DA_model_new.lp", io_options={"symbolic_solver_labels": True})
-t1 = time.perf_counter()     #build time
+# t0 = time.perf_counter()
+# da_lazy_mod = simulator.egret_uc_model_generator(md_full, ptdf_options={"lazy": True})   # pyomo model with quest storage constraints0
+# # da_mod.write("questPCM_DA_model_new.lp", io_options={"symbolic_solver_labels": True})
+# t1 = time.perf_counter()     #build time
 
 
-pyomo_sol, _, _ = simulator.egret_uc_solver(
-    da_lazy_mod, 
-    solver="gurobi",
-    mipgap=input_manager.config.get("mipgap", 0.01), 
-    timelimit=None, 
-    solver_tee=False, 
-    symbolic_solver_labels=False, 
-    solver_options=None, 
-    solve_method_options=None, 
-    relaxed=False)
+# pyomo_sol, _, _ = simulator.egret_uc_solver(
+#     da_lazy_mod, 
+#     solver="gurobi",
+#     mipgap=input_manager.config.get("mipgap", 0.01), 
+#     timelimit=None, 
+#     solver_tee=False, 
+#     symbolic_solver_labels=False, 
+#     solver_options=None, 
+#     solve_method_options=None, 
+#     relaxed=False)
 
-t2 = time.perf_counter() 
+# t2 = time.perf_counter() 
 
-lazy_mono_obj = value(next(da_lazy_mod.component_data_objects(Objective, active=True)))
-# da_mod.write("questPCM_DA_model_after_solve.lp", io_options={"symbolic_solver_labels": True}) #c heck in LP if transmission constraints were added. 
+# lazy_mono_obj = value(next(da_lazy_mod.component_data_objects(Objective, active=True)))
+# # da_mod.write("questPCM_DA_model_after_solve.lp", io_options={"symbolic_solver_labels": True}) #c heck in LP if transmission constraints were added. 
 
 
 # ____________/ Get QuESt outputs
@@ -139,41 +190,41 @@ lazy_mono_obj = value(next(da_lazy_mod.component_data_objects(Objective, active=
 
 # ____________/ Print LAZY results
 
-build_time = t1-t0
-solve_time = t2-t1
+# build_time = t1-t0
+# solve_time = t2-t1
 
-print("\n====================LAZY PTDF===========================")
-print("MONO OBJECTIVE:", lazy_mono_obj)
-print("MONO BUILD TIME (secs):", round(build_time,4))
-print("MONO SOLVE TIME (secs):", round(solve_time,4))
+# print("\n====================LAZY PTDF===========================")
+# print("MONO OBJECTIVE:", lazy_mono_obj)
+# print("MONO BUILD TIME (secs):", round(build_time,4))
+# print("MONO SOLVE TIME (secs):", round(solve_time,4))
 
 
 # #___________________________________________________/ Monolithic DA model with non-lazy PTDF. Time.
 
 
-da_mod_mono = simulator.egret_uc_model_generator(md_full, ptdf_options={"lazy": False})   # pyomo model with quest storage constraints0
-# # da_mod.write("questPCM_DA_model_new.lp", io_options={"symbolic_solver_labels": True})
+# da_mod_mono = simulator.egret_uc_model_generator(md_full, ptdf_options={"lazy": False})   # pyomo model with quest storage constraints0
+# # # da_mod.write("questPCM_DA_model_new.lp", io_options={"symbolic_solver_labels": True})
 
-t3 = time.perf_counter()
+# t3 = time.perf_counter()
 
-pyomo_sol, _, _ = simulator.egret_uc_solver(
-    da_mod_mono, 
-    solver="gurobi",
-    mipgap=0.00, 
-    timelimit=None, 
-    solver_tee=False, 
-    symbolic_solver_labels=False, 
-    solver_options=None, 
-    solve_method_options=None, 
-    relaxed=False)
+# pyomo_sol, _, _ = simulator.egret_uc_solver(
+#     da_mod_mono, 
+#     solver="gurobi",
+#     mipgap=0.00, 
+#     timelimit=None, 
+#     solver_tee=False, 
+#     symbolic_solver_labels=False, 
+#     solver_options=None, 
+#     solve_method_options=None, 
+#     relaxed=False)
 
-t4 = time.perf_counter() - t3
+# t4 = time.perf_counter() - t3
 
-mono_obj = value(next(da_mod_mono.component_data_objects(Objective, active=True)))
+# mono_obj = value(next(da_mod_mono.component_data_objects(Objective, active=True)))
 
-print("\n====================Original Monolithic===========================")
-print("MONO OBJECTIVE:", mono_obj)
-print("MONO SOLVE TIME (secs):", round(t4,4))
+# print("\n====================Original Monolithic===========================")
+# print("MONO OBJECTIVE:", mono_obj)
+# print("MONO SOLVE TIME (secs):", round(t4,4))
 
 
 # # da_mod = simulator.egret_uc_model_generator(md)
