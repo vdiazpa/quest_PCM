@@ -14,7 +14,9 @@ egret_logger.setLevel(logging.ERROR)
 
 
 
-def run_quest_default(md_full, simulator, mipgap, seed): 
+def run_quest_default(md_full, simulator, mipgap, seed, 
+        run_dir=None, # directory to save lazy  (quest default solve algorithm)
+        ): 
 
     t0 = time.perf_counter()
     model = simulator.egret_uc_model_generator(md_full, ptdf_options={"lazy": True}) 
@@ -39,17 +41,16 @@ def run_quest_default(md_full, simulator, mipgap, seed):
     t2 = time.perf_counter()
     solve_time = t2 - t1
 
-    return {"OFV": obj_val, "build_time": build_time, "solve_time": solve_time}
+    return {"OFV": obj_val, "build_time": build_time, "solve_time": solve_time, "t_dispatch_build": None, "t_dispatch_solve": None}
 
 
-def run_rolling_horizon(md_full, F, L, simulator, RH_opt_gap=0.01, relax_lookahead=False, seed=None):
+def run_rolling_horizon(md_full, F, L, simulator, RH_opt_gap=0.01, relax_lookahead=False, seed=None, run_dir=None):
 
     rh_mod, _, fixed_sol, res = run_RH(
         md_full, F=F, L=L, simulator=simulator, RH_opt_gap=RH_opt_gap, solver_options = {"Seed": seed}, lazy_ptdf=False, cache_ptdf=True, relax_lookahead=relax_lookahead)
 
     #save stitched RH binaries
-    save_solution_to_csv(fixed_sol, 
-                         run_dir / "outputs" / "RH_solution.csv")
+    save_solution_to_csv(fixed_sol, run_dir / "outputs" / "RH_solution.csv")
     
     return {
         "OFV": res["rh_objective"], 
@@ -59,8 +60,9 @@ def run_rolling_horizon(md_full, F, L, simulator, RH_opt_gap=0.01, relax_lookahe
         "t_dispatch_solve": res["t_dispatch_solve"]}
 
 
-def execute_experiment(run, md_full, simulator):
-    method = run["solve_method"]
+def execute_experiment(run, md_full, simulator, run_dir):
+
+    method = run["solve_method"] # get solve method, mipgap and seed from the run configuration (matrix row)
     mipgap = run["mipgap"]
     seed = int(run["seed"])
 
@@ -72,8 +74,9 @@ def execute_experiment(run, md_full, simulator):
             md_full, 
             F=run["F"], L=run["L"], simulator=simulator, 
             RH_opt_gap=mipgap, 
-            solver_options={"Seed": seed},
-            relax_lookahead=run["relax_l"])
+            seed=seed,
+            relax_lookahead=run["relax_l"], 
+            run_dir=run_dir)
 
     return results
 
@@ -120,11 +123,7 @@ def main():
     md_full.data["current_market"] = "DA"
 
     #execute experiemnt
-    results = execute_experiment(run, md_full, simulator)
-
-    #save results to CSV
-    save_solution_to_csv(results, run_dir / "outputs" / "results.csv")
-
+    results = execute_experiment(run, md_full, simulator, run_dir)
 
 if __name__ == "__main__":
     main()
