@@ -294,7 +294,7 @@ def relax_lookahead_binaries(model, n_fixed_local):
         print(f"  {name}: {n}")
 
 
-def run_RH(md_full, F, L, simulator, RH_opt_gap=0.01, solver_options = None, cache_ptdf=False, lazy_ptdf=False, relax_lookahead=False):
+def run_RH(md_full, F, L, simulator, RH_opt_gap=0.01, solver_options = None, cache_ptdf=False,  relax_lookahead=False):
 
     #========================================================================================== Initialization
 
@@ -327,11 +327,11 @@ def run_RH(md_full, F, L, simulator, RH_opt_gap=0.01, solver_options = None, cac
 
         t_build     = time.perf_counter()
         if cache_ptdf:
-            model = simulator.egret_uc_model_generator(md_window, ptdf_options={"lazy": lazy_ptdf}, PTDF_matrix_dict=ptdf_cache)
+            model = simulator.egret_uc_model_generator(md_window, ptdf_options={"lazy": False}, PTDF_matrix_dict=ptdf_cache)
             # for key, ptdf in ptdf_cache.items():
                 # print(f"Window {i+1}: key={key}, PTDF object id={id(ptdf)}") # Check ptdf is reused
         else: 
-            model = simulator.egret_uc_model_generator(md_window, ptdf_options={"lazy": lazy_ptdf})
+            model = simulator.egret_uc_model_generator(md_window, ptdf_options={"lazy": False})
 
         if relax_lookahead:
             n_fixed_local = t_fix1 - t_fix0 + 1

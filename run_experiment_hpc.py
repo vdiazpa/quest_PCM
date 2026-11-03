@@ -10,9 +10,12 @@ import logging
 import time
 import argparse
 from pathlib import Path
+import os
+import json 
+import socket
+import subprocess
+
 egret_logger.setLevel(logging.ERROR)
-
-
 
 def run_quest_default(md_full, simulator, mipgap, seed, 
         run_dir=None, # directory to save lazy  (quest default solve algorithm)
@@ -72,10 +75,10 @@ def execute_experiment(run, md_full, simulator, run_dir):
     elif method == "RH":
         results = run_rolling_horizon(
             md_full, 
-            F=run["F"], L=run["L"], simulator=simulator, 
+            F=int(run["F"]), L=int(run["L"]), simulator=simulator, 
             RH_opt_gap=mipgap, 
             seed=seed,
-            relax_lookahead=run["relax_l"], 
+            relax_lookahead=bool(run["relax_l"]), 
             run_dir=run_dir)
 
     return results
@@ -106,6 +109,8 @@ def main():
     #create run directory if it doesn't exist
     run_dir = Path("runs") /  run_id
     run_dir.mkdir(parents=True, exist_ok=False)
+
+    outputs = run_dir / "outputs"
 
     # Prepare ru-specific YAML 
     ## TO DO 
