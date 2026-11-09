@@ -1,0 +1,401 @@
+#RH_utils.py
+
+from copy import deepcopy
+from pyomo.environ import *
+import time 
+
+bar = "################################################################"
+
+
+def RH_windows_fixes(T, F, L):
+    #Gets window lengths and fixed time periods given L, F, and T
+    W = F + L
+    t = 1
+    windows = []
+    fixes = []
+
+    t_star = T - W + 1
+    while t <= T:
+        r = T - t + 1
+        H = min(W, r)
+        s_e = list(range(t, t + H))
+        windows.append(s_e)
+
+        w_o = (t + W - 1 > T)
+        w_s = (t < t_star) and (t + min(F, H) > t_star)
+
+        if (t < t_star) and (w_o or w_s):
+            F_k = min(F, t_star - t, H)
+        else:
+            F_k = min(F, H)
+
+        if t >= t_star:
+            fixes.append((t, t + H - 1))
+            t += H
+        else:
+            fixes.append((t, t + F_k - 1))
+            t += F_k
+
+    return windows, fixes
+
+
+def slice_md(md_full, s_e): 
+
+    all_keys = md_full.data["system"]["time_keys"]
+    selected_keys = [all_keys[t-1] for t in s_e]
+    md_window = md_full.clone_at_time_keys(selected_keys)
+    md_window.data["current_market"] = "DA"
+    return md_window
+
+def apply_init_state_to_md(md, init_states):
+
+    generators = md.data["elements"].get("generator", {})
+    for gen in generators.keys():
+        if generators[gen].get("generator_type") == "thermal":
+            generators[gen]["initial_status"] = init_states['StatusAtT0'].get(gen, 0)
+            generators[gen]["initial_p_output"] = init_states['PowerGeneratedT0'].get(gen, 0)
+
+    # apply the SoC
+    storage = md.data["elements"].get("storage", {})
+    soc_state = init_states.get("StorageSocOnT0", {})
+
+    if storage:
+        print(f"[RH state] Storage exists in md_window")
+        for s, soc in soc_state.items():
+            storage[s]["initial_state_of_charge"] = soc
+            print(f"[RH state] Set {s} initial_state_of_charge = {soc:.4f}")
+    return md
+
+def extract_init_state_and_fixed_from_model(model, t_roll_local, md_wind, fix_vars=True):
+    """
+    Returns:
+      InitialState: dict for next window carryover
+      fixed_vars:   dict of variable values for times <= t_roll_local (optional)
+    """
+
+    samp_t = next(iter(model.TimePeriods))
+
+    def tkey(t_int):
+        return str(t_int) if isinstance(samp_t, str) else t_int
+
+    t0 = int(value(model.InitialTime))
+    tr = int(t_roll_local)
+
+    # StatusAtT0 taken from md_wind 
+    StatusAtT0 = {g: md_wind.data['elements']['generator'][g].get('initial_status', 0)for g in model.ThermalGenerators}
+
+    # --- compute status streak through t_roll_local ---
+    last_status = {g: int(value(model.UnitOn[g, tkey(tr)])) for g in model.ThermalGenerators}
+    status_change = {g: False for g in model.ThermalGenerators}
+
+    status_dict = {}
+    for g in model.ThermalGenerators:
+        for t in range(t0, tr + 1):
+            if t == t0:
+                if value(model.UnitOn[g, tkey(t)]) - value(model.UnitOnT0[g]) != 0:
+                    status_change[g] = True
+                    break
+            else:
+                if value(model.UnitOn[g, tkey(t)]) - value(model.UnitOn[g, tkey(t-1)]) != 0:
+                    status_change[g] = True
+                    break
+
+        if not status_change[g]:
+            if int(value(model.UnitOnT0[g])) == 1:
+                status_dict[g] = int(StatusAtT0[g]) + (tr - t0 + 1)
+            else:
+                status_dict[g] = int(StatusAtT0[g]) - (tr - t0 + 1)
+        else:
+            streak = 1
+            for t in range(tr - 1, t0 - 1, -1):
+                if int(value(model.UnitOn[g, tkey(t)])) == last_status[g]:
+                    streak += 1
+                else:
+                    break
+            status_dict[g] = streak if last_status[g] == 1 else -streak
+
+    #  InitialState carryover 
+    baseMVA = md_wind.data["system"]["baseMVA"]
+    InitialState = { "PowerGeneratedT0": {g: value(model.PowerGenerated[g, tkey(tr)])*baseMVA for g in model.ThermalGenerators}, "StatusAtT0": status_dict}
+
+    if hasattr(model, "Storage") and hasattr(model, "SocStorage"):
+        storage_units = list(model.Storage)
+        t_soc = tkey(tr)
+
+        print(f"[RH state] QuESt/Egret storage detected: {len(storage_units)} units.")
+        print(f"[RH state] Extracting SocStorage at boundary t = {t_soc}")
+
+        InitialState["StorageSocOnT0"] = { s: value(model.SocStorage[s, t_soc]) for s in storage_units }
+
+        for s, soc in list(InitialState["StorageSocOnT0"].items())[:5]:
+            print(f"[RH state] Carryover SoC {s}: {soc:.4f}")
+
+    elif hasattr(model, "StorageUnits") and hasattr(model, "SoC"):
+        storage_units = list(model.StorageUnits)
+        t_soc = tkey(tr)
+
+        print(f"[RH state] Generic Egret storage detected: {len(storage_units)} units.")
+        print(f"[RH state] Extracting SoC at boundary t = {t_soc}")
+
+        InitialState["StorageSocOnT0"] = { s: value(model.SoC[s, t_soc])  for s in storage_units}
+
+        for s, soc in list(InitialState["StorageSocOnT0"].items())[:5]:
+            print(f"[RH state] Carryover SoC {s}: {soc:.4f}")
+
+    else:
+        print("[RH state] No storage variables found on solved model.")
+        print("[RH state] Has Storage?", hasattr(model, "Storage"))
+        print("[RH state] Has SocStorage?", hasattr(model, "SocStorage"))
+        print("[RH state] Has StorageUnits?", hasattr(model, "StorageUnits"))
+        print("[RH state] Has SoC?", hasattr(model, "SoC"))
+
+    #  Fixed solution slice up to roll/fix time 
+    fixed_vars = None
+    if fix_vars:
+        fixed_vars = {}
+
+        times = list(range(t0, tr + 1))
+
+        # thermal UC vars
+        if hasattr(model, "UnitOn"):
+            fixed_vars["UnitOn"] = {(g, t): int(round(value(model.UnitOn[g, tkey(t)])))for g in model.ThermalGenerators for t in times}
+        if hasattr(model, "UnitStart"):
+            fixed_vars["UnitStart"] = {(g, t): int(round(value(model.UnitStart[g, tkey(t)])))for g in model.ThermalGenerators for t in times}
+        if hasattr(model, "UnitStop"):
+            fixed_vars["UnitStop"] = {(g, t): int(round(value(model.UnitStop[g, tkey(t)])))for g in model.ThermalGenerators for t in times}
+        if hasattr(model, "RegulationOn"):
+            fixed_vars["RegulationOn"] = {idx: int(round(value(model.RegulationOn[idx]))) for idx in model.RegulationOn if int(idx[-1]) <= tr}
+
+        #generic storage 
+        if hasattr(model, "InputStorage"):
+            fixed_vars["InputStorage"] = {(b, t): int(round(value(model.InputStorage[b, tkey(t)]))) for b in model.GESS_Storage for t in times}
+        if hasattr(model, "OutputStorage"):
+            fixed_vars["OutputStorage"] = {(b, t): int(round(value(model.OutputStorage[b, tkey(t)]))) for b in model.GESS_Storage for t in times}
+
+
+    return InitialState, fixed_vars
+
+def save_solution_to_csv(fixed_sol, filename="RH_solution.csv"):
+
+    import csv
+    import json 
+    from pathlib import Path
+
+    filename = Path(filename)
+    filename.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(filename, mode='w', newline='') as file:
+
+        writer = csv.writer(file)
+        writer.writerow(["variable", "component", "time", "value"])
+
+        #for every variable in fixed_solution
+        for var, entries in fixed_sol.items(): 
+            for key, val, in entries.items():
+
+                if isinstance(key, tuple) and len(key) == 2:
+                    component, t = key
+                else:
+                    component, t = key, ""
+                component = json.dumps(component, default=str)
+                writer.writerow([var, component, t, val])
+
+    print(f"Fixed solution saved to: {filename}")
+
+def load_fixed_sol(model, fixed_sol=None): 
+
+    t_sample = next(iter(model.TimePeriods))
+    #print("Eval model TimePeriods element type:", type(t_sample), "example:", t_sample)
+
+    model.fix_sol_constraint = ConstraintList(doc = "Fix_Vars_from_RH_Sol")
+    print("Fixing stitched solution to model...")
+    for (g,t), val in fixed_sol["UnitOn"].items():
+        model.UnitOn[g,t].fix(int(round(val)))
+        # model.fix_sol_constraint.add(expr = model.UnitOn[g,t] == int(round(val)))
+    for (g,t), val in fixed_sol["UnitStart"].items():
+        model.UnitStart[g,t].fix(int(round(val)))
+        # model.fix_sol_constraint.add(expr = model.UnitStart[g,t] == int(round(val)))
+    for (g,t), val in fixed_sol["UnitStop"].items():
+        model.UnitStop[g,t].fix(int(round(val)))
+        # model.fix_sol_constraint.add(expr = model.UnitStop[g,t] == int(round(val)))
+
+    if hasattr(model, "InputStorage"):
+        for idx, val in fixed_sol["InputStorage"].items():
+            model.InputStorage[idx].fix(int(round(val)))
+    if hasattr(model, "OutputStorage"):
+        for idx, val in fixed_sol["OutputStorage"].items():
+            model.OutputStorage[idx].fix(int(round(val)))
+    if hasattr(model, "RegulationOn"):
+        for idx, val in fixed_sol["RegulationOn"].items():
+            model.RegulationOn[idx].fix(int(round(val)))
+
+    return  model
+
+def write_state_comparison_csv(init_states, md_window, model, filename="state_check.csv"):
+    import csv
+
+    with open(filename, mode="w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([ "Generator", "Computed_StatusAtT0", "MD_initial_status", "Model_UnitOnT0", "Model_UnitOnT0State"])
+
+        for g in model.ThermalGenerators:
+            computed = init_states["StatusAtT0"].get(g, None)
+            md_stat  = md_window.data["elements"]["generator"][g].get("initial_status", None)
+            unit_on_t0 = None
+            unit_on_t0_state = None
+            if hasattr(model, "UnitOnT0"):
+                unit_on_t0 = int(round(value(model.UnitOnT0[g])))
+            if hasattr(model, "UnitOnT0State"):
+                unit_on_t0_state = value(model.UnitOnT0State[g])
+
+            writer.writerow([g,computed,md_stat,unit_on_t0,unit_on_t0_state])
+
+    print(f"\nState comparison written to {filename}\n")
+
+def relax_lookahead_binaries(model, n_fixed_local):
+    relaxed = {}
+    for var in model.component_objects(Var, active=True):
+
+        count = 0
+
+        for idx in var:
+            v = var[idx]
+            if not v.is_binary():
+                continue
+
+            # Normalize scalar vs tuple index
+            idx_tuple = idx if isinstance(idx, tuple) else (idx,)
+
+            # Find a time index in this variable index
+            t_local = None
+            for item in reversed(idx_tuple):
+                try:
+                    ti = int(item)
+                    if ti in [int(t) for t in model.TimePeriods]:
+                        t_local = ti
+                        break
+                except (TypeError, ValueError):
+                    pass
+
+            # Binary not indexed by time -> leave it alone
+            if t_local is None:
+                continue
+
+            # Only relax lookahead
+            if t_local > n_fixed_local:
+                v.domain = UnitInterval
+                count += 1
+
+        if count:
+            relaxed[var.name] = count
+
+    print("Relaxed lookahead binary components:")
+    for name, n in relaxed.items():
+        print(f"  {name}: {n}")
+
+
+def run_RH(md_full, F, L, simulator, RH_opt_gap=0.01, solver_options = None, cache_ptdf=False, lazy_ptdf=False, relax_lookahead=False):
+
+    #========================================================================================== Initialization
+
+    ptdf_cache = {} if cache_ptdf else None
+
+    init_states    = None
+    windows, fixes = RH_windows_fixes(len(md_full.data['system']['time_keys']), F, L)
+    fixed_sol      = {"UnitOn": {}, "UnitStart": {}, "UnitStop": {} ,"InputStorage": {}, "OutputStorage": {}, "RegulationOn": {}} 
+
+    #for code profiling
+    slice_time, build_time, rh_solve_time, t_dispatch_build, t_dispatch_solve = 0.0, 0.0, 0.0, 0.0, 0.0
+
+
+    for i, (window, fix_periods) in enumerate(zip(windows, fixes)):  #================== Main RH loop
+
+
+        t_fix0, t_fix1 = fix_periods
+        print(f"\nWindow {i+1}/{len(windows)}: {window} | fix {fix_periods}")
+
+        #_____________________________________________/Slice egret model data object for current window & time.
+        t_slice     = time.perf_counter()
+        md_window   = slice_md(md_full, window)
+        slice_time += time.perf_counter() - t_slice
+
+        #_____________________________________________/Apply initial state if i>0.
+        if init_states is not None:
+            md_window = apply_init_state_to_md(md_window, init_states)
+        
+        #_____________________________________________/Generate model for current window.
+
+        t_build     = time.perf_counter()
+        if cache_ptdf:
+            model = simulator.egret_uc_model_generator(md_window, ptdf_options={"lazy": lazy_ptdf}, PTDF_matrix_dict=ptdf_cache)
+            # for key, ptdf in ptdf_cache.items():
+                # print(f"Window {i+1}: key={key}, PTDF object id={id(ptdf)}") # Check ptdf is reused
+        else: 
+            model = simulator.egret_uc_model_generator(md_window, ptdf_options={"lazy": lazy_ptdf})
+
+        if relax_lookahead:
+            n_fixed_local = t_fix1 - t_fix0 + 1
+
+            if n_fixed_local < len(window):
+                relax_lookahead_binaries(model, n_fixed_local)
+            else: 
+                print("no lookahead in this window, no binaries relaxed")
+
+        build_time += time.perf_counter() - t_build
+
+        #TEST
+        # print("power_balance:", getattr(model, "power_balance", None))
+        # print("lazy:", getattr(model, "_ptdf_options", {}).get("lazy", None))
+        # for attr in ["PHS_present", "BESS_present", "GESS_present", "Storage", "SocStorage"]:
+        #     print(attr, hasattr(model, attr))
+        
+        # # Sanity check for injections; save comparison of computed initial status vs. model init status
+        # if i==1: 
+        #     write_state_comparison_csv(init_states, md_window, model, filename="initial_state_comparison.csv")
+        #model.write(f"RH_window_{i+1}_model.lp", io_options={"symbolic_solver_labels": True})
+
+        #_____________________________________________/Solve
+        t_rh_solve     = time.perf_counter()
+        simulator.egret_uc_solver(
+            model, solver='gurobi', mipgap=RH_opt_gap, timelimit=None, solver_tee=True, symbolic_solver_labels=False, solver_options = solver_options, solve_method_options=None, relaxed=False)
+        rh_solve_time += time.perf_counter() - t_rh_solve
+
+        t_roll_local = window.index(t_fix1) + 1  # local index of t_fix1 in the window (1..len(window))
+        init_states, fixed_vars = extract_init_state_and_fixed_from_model(model, t_roll_local, md_window, fix_vars=True)
+
+        #_____________________________________________/Stitch solution 
+        for k, vardict in fixed_vars.items():
+            if k not in fixed_sol:
+                continue
+            for (idx, t_local), v in vardict.items():
+                t_global = window[t_local - 1]     # convert local -> global
+                if t_fix0 <= t_global <= t_fix1:
+                    fixed_sol[k][(idx, t_global)] = v
+
+#_____________________________________________/Evaluate stitched solution 
+
+    print(f"\n{bar}", "\nSolving fixed-commitment dispatch...", f"\n{bar}")
+
+    t0_dispatch_build = time.perf_counter()
+
+    md_dispatch = deepcopy(md_full)
+    model = simulator.egret_uc_model_generator(md_dispatch, ptdf_options={"lazy": False}, PTDF_matrix_dict=ptdf_cache)
+    model = load_fixed_sol(model, fixed_sol)
+
+    t_dispatch_build = time.perf_counter() - t0_dispatch_build
+
+    t_dispatch_solve0 = time.perf_counter()
+    simulator.egret_uc_solver(model, solver='gurobi', mipgap=RH_opt_gap, timelimit=None, solver_tee=False, symbolic_solver_labels=False, solver_options = None, solve_method_options=None, relaxed=False)
+
+    t_dispatch_solve = time.perf_counter() - t_dispatch_solve0
+
+    print("RH Objective:", round(value(list(model.component_data_objects(Objective, active=True))[0]),2))
+    print("RH Build Time (secs):", round(build_time,4))
+    print("RH Solve Time (secs):", round(rh_solve_time,4))
+    print("Dispatch Build Time (secs):", round(t_dispatch_build,4))
+    print("Dispatch Solve Time (secs):", round(t_dispatch_solve,4))
+    print(f"{bar}", "\nRH solution complete", f"\n{bar}")
+
+    return model, None, fixed_sol, {"rh_build_time": build_time, "rh_solve_time": rh_solve_time, "t_dispatch_build": t_dispatch_build, "t_dispatch_solve": t_dispatch_solve, "rh_objective": value(list(model.component_data_objects(Objective, active=True))[0])}
+
+

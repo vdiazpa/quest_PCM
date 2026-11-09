@@ -1,93 +1,98 @@
 
-# from pyomo.environ import Objective, value
-# from egret.common.log import logger as egret_logger
-# from pcm.data_manager.data_main import DataManager
-# from pcm.market_manager.market_main import MarketSimulator
-# from pcm.result_manager.result_main import ResultManager
-# import networkx as nx
-# import pandas as pd
-# # from RH_utils import run_RH
-# # import logging
-# # import time
-# from pyomo.environ import *
+from pyomo.environ import Objective, value
+from egret.common.log import logger as egret_logger
+from pcm.data_manager.data_main import DataManager
+from pcm.market_manager.market_main import MarketSimulator
+from pcm.result_manager.result_main import ResultManager
+import networkx as nx
+import pandas as pd
+from RH_utils import run_RH, save_solution_to_csv
+import logging
+import time
+from pyomo.environ import *
 
-# # egret_logger.setLevel(logging.ERROR)
+egret_logger.setLevel(logging.ERROR)
 
 
-# def add_branch_contingencies(md, max_cont=None):
-#     branches = md.data["elements"]["branch"]
+def add_branch_contingencies(md, max_cont=None):
+    branches = md.data["elements"]["branch"]
 
-#     G = nx.Graph()
+    G = nx.Graph()
 
-#     for br, data in branches.items():
-#         if data.get("in_service", True):
-#             G.add_edge(data["from_bus"], data["to_bus"], name=br )
+    for br, data in branches.items():
+        if data.get("in_service", True):
+            G.add_edge(data["from_bus"], data["to_bus"], name=br )
 
-#     bridge_branches = set()
-#     for u, v in nx.bridges(G):
-#         bridge_branches.add(G[u][v]["name"])
+    bridge_branches = set()
+    for u, v in nx.bridges(G):
+        bridge_branches.add(G[u][v]["name"])
 
-#     print("Removing islanding contingency branches:")
-#     print(sorted(bridge_branches))
+    print("Removing islanding contingency branches:")
+    print(sorted(bridge_branches))
 
-#     conts = {}
-#     for k, br in enumerate(branches):
-#         if max_cont is not None and len(conts) >= max_cont:
-#             break
+    conts = {}
+    for k, br in enumerate(branches):
+        if max_cont is not None and len(conts) >= max_cont:
+            break
 
-#         if not branches[br].get("in_service", True):
-#             continue
+        if not branches[br].get("in_service", True):
+            continue
 
-#         if br in bridge_branches:
-#             continue
+        if br in bridge_branches:
+            continue
 
-#         conts[f"cont_{br}"] = { "branch_contingency": br }
-#     md.data["elements"]["contingency"] = conts
-#     print(f"Added {len(conts)} non-islanding branch contingencies")
+        conts[f"cont_{br}"] = { "branch_contingency": br }
+    md.data["elements"]["contingency"] = conts
+    print(f"Added {len(conts)} non-islanding branch contingencies")
 
-#     return md
+    return md
+
+
+def extract_quest_commitment(model):
+
+    times = list(range(min(model.TimePeriods, len(model.TimePeriods)+1)))
+    samp_t = next(iter(model.TimePeriods))
+
+    def tkey(t_int):
+        return str(t_int) if isinstance(samp_t, str) else t_int
+
+    var_vals, fixed_sol = {}, {}
+            # thermal UC vars
+    if hasattr(model, "UnitOn"):
+        var_vals["UnitOn"] = {(g, t): int(round(value(model.UnitOn[g, tkey(t)]))) for g in model.ThermalGenerators for t in times}
+    if hasattr(model, "UnitStart"):
+        var_vals["UnitStart"] = {(g, t): int(round(value(model.UnitStart[g, tkey(t)])))for g in model.ThermalGenerators for t in times}
+    if hasattr(model, "UnitStop"):
+        var_vals["UnitStop"] = {(g, t): int(round(value(model.UnitStop[g, tkey(t)])))for g in model.ThermalGenerators for t in times}
+    if hasattr(model, "RegulationOn"):
+        var_vals["RegulationOn"] = {idx: int(round(value(model.RegulationOn[idx]))) for idx in model.RegulationOn if int(idx[-1]) <= len(model.TimePeriods)+1}
+    #generic storage 
+    if hasattr(model, "InputStorage"):
+        var_vals["InputStorage"] = {(b, t): int(round(value(model.InputStorage[b, tkey(t)]))) for b in model.GESS_Storage for t in times}
+    if hasattr(model, "OutputStorage"):
+        var_vals["OutputStorage"] = {(b, t): int(round(value(model.OutputStorage[b, tkey(t)]))) for b in model.GESS_Storage for t in times}
+
+    for k, vardict in var_vals.items():
+        fixed_sol[k] = {}
+        for (idx, t_local), v in vardict.items():
+            fixed_sol[k][(idx, t_local)] = v
+
+    return fixed_sol
+
+    
 
 # #_____________________________________________/Read data & create a simulator object.
 
 # # main_data_path = "Data/duke_revised"
 main_data_path = "Data/RTS_GMLC"
 
-# yaml_path = "config/GMLC_config.yaml"
-# input_manager = DataManager(main_data_path, yaml_path)
-# input_manager.export_input_json()
-# simulator = MarketSimulator(input_manager)
-# simulator.create_DA_RT_models()
+yaml_path = "config/GMLC_config.yaml"
+input_manager = DataManager(main_data_path, yaml_path)
+input_manager.export_input_json()
+simulator = MarketSimulator(input_manager)
+simulator.create_DA_RT_models()
 
 
-# def relax_lookahead_binaries(model, periods_not_relaxed=12):
-#     time_periods = set(int(t) for t in model.TimePeriods)
-
-#     for var in model.component_objects(Var, active=True):
-#         for idx in var:
-#             v = var[idx]
-#             if not v.is_binary():
-#                 continue
-
-#             idx_tuple = idx if isinstance(idx, tuple) else (idx,)
-
-#             t_local = None
-#             for item in reversed(idx_tuple):
-#                 try:
-#                     ti = int(item)
-#                     if ti in time_periods:
-#                         t_local = ti
-#                         break
-#                 except (TypeError, ValueError):
-#                     pass
-
-#             if t_local is None:
-#                 continue
-
-#             # relax only lookahead periods
-#             if t_local > periods_not_relaxed:
-#                 v.domain = UnitInterval
-
-# def print_num_binaries(model):
 #     num_binaries = 0
 #     for var in model.component_objects(Var, active=True):
 #         for idx in var:
@@ -99,18 +104,12 @@ main_data_path = "Data/RTS_GMLC"
 
 # # t_rh_start = time.perf_counter()
 
-# md_full = simulator.DA_model.clone()
-# md_full.data["current_market"] = "DA"
+md_full = simulator.DA_model.clone()
+md_full.data["current_market"] = "DA"
 # md_full.data["system"]["timestamp"] = [f"{hour-1:02d}:00" for hour in input_manager.DA_periods]
 # # md_full.write("questPCM_DA_model.json")
 
 # model = simulator.egret_uc_model_generator(md_full)
-
-# print_num_binaries(model)
-
-# relax_lookahead_binaries(model)
-
-# print_num_binaries(model)
 
 # for g, gd in md_full.data["elements"]["generator"].items():
 #     if gd.get("generator_type") in ["thermal", "Thermal"]:
@@ -146,21 +145,24 @@ main_data_path = "Data/RTS_GMLC"
 
 # #_____________________________________________/Create DA model and solve with lazy PTDF. Time. 
 # t0 = time.perf_counter()
-# da_lazy_mod = simulator.egret_uc_model_generator(md_full, ptdf_options={"lazy": True})   # pyomo model with quest storage constraints0
+da_lazy_mod = simulator.egret_uc_model_generator(md_full, ptdf_options={"lazy": True})   # pyomo model with quest storage constraints0
 # # da_mod.write("questPCM_DA_model_new.lp", io_options={"symbolic_solver_labels": True})
 # t1 = time.perf_counter()     #build time
 
 
-# pyomo_sol, _, _ = simulator.egret_uc_solver(
-#     da_lazy_mod, 
-#     solver="gurobi",
-#     mipgap=input_manager.config.get("mipgap", 0.01), 
-#     timelimit=None, 
-#     solver_tee=False, 
-#     symbolic_solver_labels=False, 
-#     solver_options=None, 
-#     solve_method_options=None, 
-#     relaxed=False)
+pyomo_sol, _, _ = simulator.egret_uc_solver(
+    da_lazy_mod, 
+    solver="gurobi",
+    mipgap=input_manager.config.get("mipgap", 0.01), 
+    timelimit=None, 
+    solver_tee=True, 
+    symbolic_solver_labels=False, 
+    solver_options=None, 
+    solve_method_options=None, 
+    relaxed=False)
+
+res = extract_quest_commitment(da_lazy_mod)
+save_solution_to_csv(res, "quest_commitment.csv")
 
 # t2 = time.perf_counter() 
 
@@ -236,125 +238,3 @@ main_data_path = "Data/RTS_GMLC"
 # # result_processor = ResultManager(simulator, result_path)
 # # result_processor.export_results()
 
-
-#======================================== Collegues's code; disanle nodal ptdf. cplex solver. If disable 
-
-from pyomo.environ import Objective, value
-from egret.common.log import logger as egret_logger
-from pcm.data_manager.data_main import DataManager
-from pcm.market_manager.market_main import MarketSimulator
-from pcm.result_manager.result_main import ResultManager
-import networkx as nx
-import pandas as pd
-from pyomo.environ import *
- 
- 
-# main_data_path = "Data/duke_revised"
-# main_data_path = "Data/RTS_GMLC_DA_only"
- 
-yaml_path = "config/GMLC_config.yaml"
-input_manager = DataManager(main_data_path, yaml_path)
-input_manager.export_input_json()
-simulator = MarketSimulator(input_manager)
-simulator.create_DA_RT_models()
- 
- 
-def relax_lookahead_binaries(model, periods_not_relaxed=12):
-    time_periods = set(int(t) for t in model.TimePeriods)
- 
-    for var in model.component_objects(Var, active=True):
-        for idx in var:
-            v = var[idx]
-            if not v.is_binary():
-                continue
- 
-            idx_tuple = idx if isinstance(idx, tuple) else (idx,)
- 
-            t_local = None
-            for item in reversed(idx_tuple):
-                try:
-                    ti = int(item)
-                    if ti in time_periods:
-                        t_local = ti
-                        break
-                except (TypeError, ValueError):
-                    pass
- 
-            if t_local is None:
-                continue
- 
-            # relax only lookahead periods
-            if t_local > periods_not_relaxed:
-                v.domain = UnitInterval
- 
-def print_num_binaries(model):
-    num_binaries = 0
-    for var in model.component_objects(Var, active=True):
-        for idx in var:
-            v = var[idx]
-            if v.is_binary():
-                num_binaries +=1
-    print(num_binaries)
-#_____________________________________________/Extract DA model data from simulator.
- 
-# t_rh_start = time.perf_counter()
- 
-md_full = simulator.DA_model.clone()
-md_full.data["current_market"] = "DA"
-md_full.data["system"]["timestamp"] = [f"{hour-1:02d}:00" for hour in input_manager.DA_periods]
-# md_full.write("questPCM_DA_model.json")
-for s, storage_dict in md_full.elements(element_type='storage'):
-    storage_dict["scheduling_problem_soc"] = {'data_type': 'time_series', 'values': [storage_dict['end_state_of_charge']]*len(md_full.data["system"]["time_keys"])}
-
-from egret.models.unit_commitment import create_tight_unit_commitment_model  
-from egret.models.unit_commitment import _solve_unit_commitment        
-model = create_tight_unit_commitment_model(md_full, ptdf_options={"lazy": True})
-print("model has", len(model.TimePeriods), "planning periods")
-print("Model has the following number of binaries:")
-print_num_binaries(model)
-
-import time
-# t_start = time.perf_counter()
-# _, _, _ = _solve_unit_commitment(
-#             model,
-#             solver="gurobi",
-#             mipgap=0.1,
-#             timelimit=None,
-#             solver_tee=True,
-#             symbolic_solver_labels=False,
-#             solver_options={"Seed": 1},
-#             solve_method_options=None,
-#             relaxed=False
-#         )
-# t_end = time.perf_counter()
-# print(f"Initial solve time: {t_end - t_start} seconds")
-
-#=====================================================================
-
-print("\n Trying now with relaxed lookahead binaries")
-relax_lookahead_binaries(model, periods_not_relaxed = 12)
-print("Model has the following number of binaries:")
-print_num_binaries(model)
-
-t_start = time.perf_counter()
-model._ptdf_options['lp_iteration_limit'] = 0
-_, _, _ = _solve_unit_commitment(
-            model,
-            solver="gurobi",
-            mipgap=0.1,
-            timelimit=None,
-            solver_tee=True,
-            symbolic_solver_labels=False,
-            solver_options={"Seed": 1},
-            solve_method_options=None,
-            relaxed=False
-        )
-t_end = time.perf_counter()
-print(f"Relaxed solve time: {t_end - t_start} seconds")
-
-# model.write("test_relaxed.lp", io_options={"symbolic_solver_labels": True})
-# from egret.models.unit_commitment import _solve_unit_commitment
-# Disable Egret's initial LP relaxation / binary restoration phase
-# model._ptdf_options['lp_iteration_limit'] = 0
-# print_num_binaries("Number of binaries: ",model)
- 
