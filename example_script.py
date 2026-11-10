@@ -1,6 +1,7 @@
 
 from pyomo.environ import Objective, value
 from egret.common.log import logger as egret_logger
+from egret.models.unit_commitment import _solve_unit_commitment
 from pcm.data_manager.data_main import DataManager
 from pcm.market_manager.market_main import MarketSimulator
 from pcm.result_manager.result_main import ResultManager
@@ -93,13 +94,7 @@ simulator = MarketSimulator(input_manager)
 simulator.create_DA_RT_models()
 
 
-#     num_binaries = 0
-#     for var in model.component_objects(Var, active=True):
-#         for idx in var:
-#             v = var[idx]
-#             if v.is_binary():
-#                 num_binaries +=1
-#     print(num_binaries)
+
 # #_____________________________________________/Extract DA model data from simulator.
 
 # # t_rh_start = time.perf_counter()
@@ -146,25 +141,37 @@ md_full.data["current_market"] = "DA"
 # #_____________________________________________/Create DA model and solve with lazy PTDF. Time. 
 # t0 = time.perf_counter()
 da_lazy_mod = simulator.egret_uc_model_generator(md_full, ptdf_options={"lazy": True})   # pyomo model with quest storage constraints0
+da_lazy_mod.PHS_present = False
+da_lazy_mod.BESS_present = False
 # # da_mod.write("questPCM_DA_model_new.lp", io_options={"symbolic_solver_labels": True})
-# t1 = time.perf_counter()     #build time
+t1 = time.perf_counter()     #build time
 
 
-pyomo_sol, _, _ = simulator.egret_uc_solver(
+pyomo_sol, res, _ = _solve_unit_commitment(
+# pyomo_sol, res, _ =   simulator.egret_uc_solver(
     da_lazy_mod, 
     solver="gurobi",
-    mipgap=input_manager.config.get("mipgap", 0.01), 
+    mipgap=0.1,
     timelimit=None, 
-    solver_tee=True, 
+    solver_tee=False, 
     symbolic_solver_labels=False, 
-    solver_options=None, 
+    solver_options={'LogFile': 'lazy_solve.log'},
     solve_method_options=None, 
     relaxed=False)
 
-res = extract_quest_commitment(da_lazy_mod)
-save_solution_to_csv(res, "quest_commitment.csv")
+gurobi_time = da_lazy_mod._lazy_ptdf_gurobi_time
+gurobi_solves = da_lazy_mod._lazy_ptdf_gurobi_solves
 
-# t2 = time.perf_counter() 
+t2 = time.perf_counter()  - t1
+
+print("\nGurobi solve time (secs):", round(gurobi_time,4))
+print("Gurobi solve count:", gurobi_solves)
+print("solve time according to time.perf_counter (secs):", round(t2,4))
+
+# res = extract_quest_commitment(da_lazy_mod)
+# save_solution_to_csv(res, "quest_commitment.csv")
+
+
 
 # lazy_mono_obj = value(next(da_lazy_mod.component_data_objects(Objective, active=True)))
 # # da_mod.write("questPCM_DA_model_after_solve.lp", io_options={"symbolic_solver_labels": True}) #c heck in LP if transmission constraints were added. 
